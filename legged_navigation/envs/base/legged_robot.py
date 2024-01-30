@@ -28,7 +28,7 @@
 #
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
-from legged_gym import LEGGED_GYM_ROOT_DIR, envs
+from legged_navigation import LEGGED_GYM_ROOT_DIR, envs
 from time import time
 from warnings import WarningMessage
 import numpy as np
@@ -41,11 +41,11 @@ import torch
 from torch import Tensor
 from typing import Tuple, Dict
 
-from legged_gym import LEGGED_GYM_ROOT_DIR
-from legged_gym.envs.base.base_task import BaseTask
-from legged_gym.utils.terrain import Terrain
-from legged_gym.utils.math import quat_apply_yaw, wrap_to_pi, torch_rand_sqrt_float
-from legged_gym.utils.helpers import class_to_dict
+from legged_navigation import LEGGED_GYM_ROOT_DIR
+from legged_navigation.envs.base.base_task import BaseTask
+from legged_navigation.utils.terrain import Terrain
+from legged_navigation.utils.math import quat_apply_yaw, wrap_to_pi, torch_rand_sqrt_float
+from legged_navigation.utils.helpers import class_to_dict
 from .legged_robot_config import LeggedRobotCfg
 
 class LeggedRobot(BaseTask):
@@ -67,7 +67,7 @@ class LeggedRobot(BaseTask):
         self.height_samples = None
         self.debug_viz = False
         self.init_done = False
-        self._parse_cfg(self.cfg)
+        self._parse_cfg(self.cfg) #tranform configuration setting into class attributes
         super().__init__(self.cfg, sim_params, physics_engine, sim_device, headless)
 
         if not self.headless:
@@ -166,7 +166,7 @@ class LeggedRobot(BaseTask):
         self._reset_root_states(env_ids)
 
         self._resample_commands(env_ids)
-
+        
         # reset buffers
         self.last_actions[env_ids] = 0.
         self.last_dof_vel[env_ids] = 0.
@@ -321,7 +321,7 @@ class LeggedRobot(BaseTask):
         """ Callback called before computing terminations, rewards, and observations
             Default behaviour: Compute ang vel command based on target and heading, compute measured terrain heights and randomly push robots
         """
-        # 
+        # env_ids is id of environment which run equal to resampling_time
         env_ids = (self.episode_length_buf % int(self.cfg.commands.resampling_time / self.dt)==0).nonzero(as_tuple=False).flatten()
         self._resample_commands(env_ids)
         if self.cfg.commands.heading_command:
@@ -330,7 +330,7 @@ class LeggedRobot(BaseTask):
             self.commands[:, 2] = torch.clip(0.5*wrap_to_pi(self.commands[:, 3] - heading), -1., 1.)
 
         if self.cfg.terrain.measure_heights:
-            self.measured_heights = self._get_heights()
+            self.measured_heights = self._get_heights() #get height of terrain arround the robot
         if self.cfg.domain_rand.push_robots and  (self.common_step_counter % self.cfg.domain_rand.push_interval == 0):
             self._push_robots()
 
@@ -610,7 +610,7 @@ class LeggedRobot(BaseTask):
         tm_params.restitution = self.cfg.terrain.restitution
         self.gym.add_triangle_mesh(self.sim, self.terrain.vertices.flatten(order='C'), self.terrain.triangles.flatten(order='C'), tm_params)   
         self.height_samples = torch.tensor(self.terrain.heightsamples).view(self.terrain.tot_rows, self.terrain.tot_cols).to(self.device)
-
+        
     def _create_envs(self):
         """ Creates environments:
              1. loads the robot URDF/MJCF asset,
@@ -762,13 +762,22 @@ class LeggedRobot(BaseTask):
         """ Returns points at which the height measurments are sampled (in base frame)
 
         Returns:
-            [torch.Tensor]: Tensor of shape (num_envs, self.num_height_points, 3)
+            [torch.Tensor]: Tensor of shape (num_envs, self.num_height_points, 3) 
+            3 refer to [x_pos, y_pos, z_height]
+            
         """
         y = torch.tensor(self.cfg.terrain.measured_points_y, device=self.device, requires_grad=False)
         x = torch.tensor(self.cfg.terrain.measured_points_x, device=self.device, requires_grad=False)
         grid_x, grid_y = torch.meshgrid(x, y)
+        
+        """
+        y 1         =>  4 1   5 1   6 1  =>  4 5 6    1 1 1
+          2             4 2   5 2   6 2      4 5 6    2 2 2
+            4 5 6                            grid_x   grid_y
+              x
+        """
 
-        self.num_height_points = grid_x.numel()
+        self.num_height_points = grid_x.numel() # number of measuring point [default 11 x 17 = 187 points]
         points = torch.zeros(self.num_envs, self.num_height_points, 3, device=self.device, requires_grad=False)
         points[:, :, 0] = grid_x.flatten()
         points[:, :, 1] = grid_y.flatten()
@@ -785,31 +794,33 @@ class LeggedRobot(BaseTask):
             NameError: [description]
 
         Returns:
-            [type]: [description]
+            [type]: [description] attribute in self.measured_heights
         """
         if self.cfg.terrain.mesh_type == 'plane':
             return torch.zeros(self.num_envs, self.num_height_points, device=self.device, requires_grad=False)
         elif self.cfg.terrain.mesh_type == 'none':
             raise NameError("Can't measure height with terrain mesh type 'none'")
 
+        # if terrain is not 'plane'
+        # offset point position around robot and rotate by base yaw
         if env_ids:
             points = quat_apply_yaw(self.base_quat[env_ids].repeat(1, self.num_height_points), self.height_points[env_ids]) + (self.root_states[env_ids, :3]).unsqueeze(1)
         else:
             points = quat_apply_yaw(self.base_quat.repeat(1, self.num_height_points), self.height_points) + (self.root_states[:, :3]).unsqueeze(1)
-
+        
         points += self.terrain.cfg.border_size
         points = (points/self.terrain.cfg.horizontal_scale).long()
         px = points[:, :, 0].view(-1)
         py = points[:, :, 1].view(-1)
         px = torch.clip(px, 0, self.height_samples.shape[0]-2)
         py = torch.clip(py, 0, self.height_samples.shape[1]-2)
-
+        
         heights1 = self.height_samples[px, py]
         heights2 = self.height_samples[px+1, py]
         heights3 = self.height_samples[px, py+1]
         heights = torch.min(heights1, heights2)
         heights = torch.min(heights, heights3)
-
+     
         return heights.view(self.num_envs, -1) * self.terrain.cfg.vertical_scale
 
     #------------ reward functions----------------

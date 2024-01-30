@@ -28,7 +28,7 @@
 #
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
-from legged_gym.envs import AnymalCRoughCfg, AnymalCRoughCfgPPO
+from legged_navigation.envs import AnymalCRoughCfg, AnymalCRoughCfgPPO
 
 class AnymalCFlatCfg( AnymalCRoughCfg ):
     class env( AnymalCRoughCfg.env ):
@@ -69,6 +69,6 @@ class AnymalCFlatCfgPPO( AnymalCRoughCfgPPO ):
 
     class runner ( AnymalCRoughCfgPPO.runner):
         run_name = ''
-        experiment_name = 'flat_anymal_c'
+        experiment_name = 'anymal_c_flat'
         load_run = -1
         max_iterations = 300

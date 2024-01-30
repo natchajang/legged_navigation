@@ -44,7 +44,8 @@ class BaseConfig:
             if key=="__class__":
                 continue
             # get the corresponding attribute object
-            var =  getattr(obj, key)
+            var =  getattr(obj, key) # value of each attribut in object
+
             # check if it the attribute is a class
             if inspect.isclass(var):
                 # instantate the class

@@ -32,11 +32,14 @@ import os
 import copy
 import torch
 import numpy as np
+import pickle
+import inspect
 import random
 from isaacgym import gymapi
 from isaacgym import gymutil
 
-from legged_gym import LEGGED_GYM_ROOT_DIR, LEGGED_GYM_ENVS_DIR
+from legged_navigation import LEGGED_GYM_ROOT_DIR, LEGGED_GYM_ENVS_DIR
+from rsl_rl.runners import OnPolicyRunner
 
 def class_to_dict(obj) -> dict:
     if not  hasattr(obj,"__dict__"):
@@ -99,6 +102,28 @@ def parse_sim_params(args, cfg):
         sim_params.physx.num_threads = args.num_threads
 
     return sim_params
+
+def comand_set_parse(s):
+    def _parse(s):
+        output = []
+        index = 0
+        num = ''
+        while index < len(s):
+            char = s[index]
+            index += 1
+            if char.isdigit():
+                num += char
+            if char in ',]' and num:
+                output.append(int(num))
+                num = ''
+            if char == '[':
+                sublist, offset = _parse(s[index:])
+                output.append(sublist)
+                index += offset
+            elif char == ']':
+                break
+        return output, index
+    return _parse(s)[0][0]
 
 def get_load_path(root, load_run=-1, checkpoint=-1):
     try:
@@ -164,6 +189,14 @@ def get_args():
         {"name": "--num_envs", "type": int, "help": "Number of environments to create. Overrides config file if provided."},
         {"name": "--seed", "type": int, "help": "Random seed. Overrides config file if provided."},
         {"name": "--max_iterations", "type": int, "help": "Maximum number of training iterations. Overrides config file if provided."},
+        
+        # add my custom parameter
+        {"name": "--debug_viz", "action": "store_true", "default": False, "help": "Enable to visualize height sample"},
+        {"name": "--command_viz", "action": "store_true", "default": False, "help": "Enable to visualize command compare with mesurement"},
+        {"name": "--load_path", "type": str, "help": "folder of replay policy"},
+        {"name": "--command_set", "type": str, "default": None,"help": "set desired command => [command set1, command set2, ...];  \
+                                                                        command set(list): [lin_vel_x(cm/s), lin_vel_y(cm/s), height(cm), roll(deg),\
+                                                                        pitch(deg), yaw(deg), lenght(sec)]"}
     ]
     # parse arguments
     args = gymutil.parse_arguments(
@@ -189,6 +222,94 @@ def export_policy_as_jit(actor_critic, path):
         traced_script_module = torch.jit.script(model)
         traced_script_module.save(path)
 
+def pickle_write(directory, file_name, obj):
+    with open(os.path.join(directory, file_name), 'wb') as file:
+        pickle.dump(obj, file)
+        
+def class2dict(obj):
+    dic = {}
+    for key in dir(obj):
+        if '__' in key:
+            continue
+        var =  getattr(obj, key)
+        if hasattr(var, '__dict__'):
+            dic[key] = class2dict(var)
+        else: dic[key] = var
+    return dic
+
+def set_cfg_from_dict(dic:dict, obj):
+    for key in dic.keys():
+        if type(dic[key]) == dict and key not in ['stiffness', 
+                                                  'damping', 
+                                                  'terrain_kwargs', 
+                                                  'default_joint_angles',
+                                                  'reward_tracking_accept']:
+            var =  getattr(obj, key)
+            set_cfg_from_dict(dic[key], var)
+        else: setattr(obj, key, dic[key])
+
+def cfg_get_attr(obj, name):
+    text = '-----------------------{}-----------------------\n'.format(name)
+    for key in dir(obj):
+        var =  getattr(obj, key)
+        if '__' in key:
+            continue
+        if hasattr(var, '__dict__'):
+            text += '  class {}\n'.format(key)
+    
+            for k in dir(var):
+                v = getattr(var, k)
+                if '__' in k:
+                    continue
+                
+                if hasattr(v, '__dict__'):
+                    text += '    class {}\n'.format(k)
+    
+                    for k2 in dir(v):
+                        v2 = getattr(v, k2)
+                        if '__' in k2:
+                            continue
+                        text += '      {} : {}\n'.format(k2, v2)
+                    continue
+                
+                text += '    {} : {}\n'.format(k, v)
+                
+            continue
+        
+        text += '  {} : {}\n'.format(key, var)
+        
+    return text
+
+def save_log(state_log, path, name):
+    pickle_write(path, name, state_log)
+
+def save_env_cfg(env_cfg, train_cfg, runner:OnPolicyRunner):
+    #save class config to dict
+    env_dic = class2dict(env_cfg)
+    train_dic = class2dict(train_cfg)
+    pickle_write(runner.log_dir, 'env_cfg.pkl', env_dic)
+    pickle_write(runner.log_dir, 'train_cfg.pkl', train_dic)
+    #save config to .txt
+    info_txt_path = os.path.join(runner.log_dir, 'EnvAndTrainCfg')
+    with open(info_txt_path, 'w') as f:
+        f.write(cfg_get_attr(env_cfg, 'EnvCfg'))
+        f.write(cfg_get_attr(train_cfg, 'TrainCfg'))
+        f.close()
+    print('save info and model in {}'.format(runner.log_dir))
+    
+def rideover_cfg(load_path, env_cfg, train_cfg):
+    env_cfg_path = os.path.join(load_path, 'env_cfg.pkl')
+    train_cfg_path = os.path.join(load_path, 'train_cfg.pkl')
+    print("Load env_cfg: {}". format(env_cfg_path))
+    print("Load train_cfg: {}". format(train_cfg_path))
+    with open(env_cfg_path, 'rb') as f:
+        env_dic = pickle.load(f)
+        set_cfg_from_dict(env_dic, env_cfg)
+        f.close()
+    with open(train_cfg_path, 'rb') as f:
+        train_dic = pickle.load(f)
+        set_cfg_from_dict(train_dic, train_cfg)
+        f.close()
 
 class PolicyExporterLSTM(torch.nn.Module):
     def __init__(self, actor_critic):
