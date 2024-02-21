@@ -30,10 +30,11 @@
 
 import math
 from legged_navigation.envs.base.legged_robot_config import LeggedRobotCfg, LeggedRobotCfgPPO
+from isaacgym import gymapi
 
 class AnymalCNavCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
-        num_observations = 52 # measure height = 187 52+187=239
+        num_observations = 55 # measure height=187 then 52 + 187 = 239
         num_envs = 4096       # number of environment default = 4096
         num_actions = 12      # number of action equal to Dof (control with actuator network)
         send_timeouts = True  # send time out information to the algorithm
@@ -115,6 +116,22 @@ class AnymalCNavCfg( LeggedRobotCfg ):
         penalize_contacts_on = ["SHANK", "THIGH"]
         terminate_after_contacts_on = ["base"]
         self_collisions = 1 # 1 to disable, 0 to enable...bitwise filter
+        collapse_fixed_joints = False
+        
+    class camera:
+        # spec refer to anymal c data sheet: 0.3—3 m range, 87.3 × 58.1 × 95.3º depth FOV (Horizontal / Vertical / Diagonal) 
+        active = True                            # use camera input for being observation
+        attach_rigid_name = "base"     # name of rigid body which reference for attaching camera
+        imgae_type =  gymapi.IMAGE_DEPTH                # type of image: gymapi.IMAGE_DEPTH or gymapi.IMAGE_COLOR
+        offset_position = gymapi.Vec3(0.4145 + 0.04715 + 0.03, 0, -0.0292)  # offset position relative to attaching rigid body frame
+                                                                            # x offset from real camera frame for 0.03 m
+        offset_rotation = gymapi.Quat.from_euler_zyx(0, 0.523598775598, 0)  # offset rotation relative to attaching rigid body frame
+        img_width = 256
+        img_height = 170
+        horizontal_fov = 87.3
+        near_plane = 0.3
+        far_plane = 3
+        enable_tensors = True
 
     class normalization:
         class obs_scales:

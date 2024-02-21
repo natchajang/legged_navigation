@@ -50,26 +50,222 @@ from legged_navigation.utils import Logger
 
 class AnymalNav(LeggedRobot):
     cfg : AnymalCNavCfg
+    
+    #------------- Init --------------
     def __init__(self, cfg, sim_params, physics_engine, sim_device, headless):
         super().__init__(cfg, sim_params, physics_engine, sim_device, headless)
-        
         # addition attributes
         self.commands_viz = False                           # for visualize command 
-        self.command_set_flag = False                       # set command without resample
-        self.logger = Logger(self.dt)                       # logger for saving logger
+        self.command_set_flag = False                       # flag for set command without resample
+        self.logger = Logger(self.dt)                       # logger for saving training history
         self.reward_saved_dict = defaultdict(list)          
         self.count_steps = 0                                # for count step if mod self.num_steps_per_env if = 0 save log of reward
         self.cur_reward_sum = torch.zeros(self.cfg.env.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
         self.rewbuffer = deque(maxlen=100)
         self.command_level = np.array([self.cfg.commands.ranges.start_vel,
                                        self.cfg.commands.ranges.start_height,
-                                       self.cfg.commands.ranges.start_angle*math.pi], dtype=float)   # linear_velocity, base height, orientation
+                                       self.cfg.commands.ranges.start_angle*math.pi], dtype=float)   # start command range linear_velocity, base height, orientation
         
         # load actuator network
         if self.cfg.control.use_actuator_network:
             actuator_network_path = self.cfg.control.actuator_net_file.format(LEGGED_GYM_ROOT_DIR=LEGGED_GYM_ROOT_DIR)
             self.actuator_network = torch.jit.load(actuator_network_path).to(self.device)
+            
+    def _init_buffers(self):
+        super()._init_buffers()
+        # Additionally initialize buffer for obs and compute reward
+        self.commands_scale = torch.tensor([self.obs_scales.lin_vel, 
+                                            self.obs_scales.lin_vel, 
+                                            self.obs_scales.height_measurements, 
+                                            self.obs_scales.dof_pos,
+                                            self.obs_scales.dof_pos,
+                                            self.obs_scales.dof_pos], device=self.device, requires_grad=False,) 
         
+        base_euler = torch.stack(list(get_euler_xyz(self.base_quat)), dim=1)
+        self.base_euler = torch.where(base_euler > math.pi, (-2 * math.pi) + base_euler, base_euler) # change range
+        self.base_mean_height = torch.mean(self.root_states[:, 2].unsqueeze(1) - self.measured_heights, dim=1)
+        
+        # first command
+        self.command_own = torch.zeros(self.num_envs, self.cfg.commands.num_commands, dtype=float, device=self.device, requires_grad=False)
+        
+        # Additionally initialize actuator network hidden state tensors
+        self.sea_input = torch.zeros(self.num_envs*self.num_actions, 1, 2, device=self.device, requires_grad=False)
+        self.sea_hidden_state = torch.zeros(2, self.num_envs*self.num_actions, 8, device=self.device, requires_grad=False)
+        self.sea_cell_state = torch.zeros(2, self.num_envs*self.num_actions, 8, device=self.device, requires_grad=False)
+        self.sea_hidden_state_per_env = self.sea_hidden_state.view(2, self.num_envs, self.num_actions, 8)
+        self.sea_cell_state_per_env = self.sea_cell_state.view(2, self.num_envs, self.num_actions, 8)
+        
+        # camera sensor buffer
+        if self.cfg.camera.active:
+            camera_list = [] # list to collect each camera tensor
+            self.gym.simulate(self.sim)
+            self.gym.fetch_results(self.sim, True)
+            self.gym.step_graphics(self.sim)
+            self.gym.render_all_camera_sensors(self.sim)
+            self.gym.start_access_image_tensors(self.sim)
+            
+            for i, c in enumerate(self.camera_handles):
+                _camera_tensor = self.gym.get_camera_image_gpu_tensor(self.sim, self.envs[i], c, self.cfg.camera.imgae_type)
+                camera_tensor = gymtorch.wrap_tensor(_camera_tensor)
+                camera_list.append(camera_tensor)
+                
+            self.gym.end_access_image_tensors(self.sim)
+            self.cemera_tensors = torch.stack(camera_list) # change list to tensor
+
+    def create_sim(self):
+        """ Creates simulation, terrain and evironments
+        """
+        self.up_axis_idx = 2 # 2 for z, 1 for y -> adapt gravity accordingly
+        self.sim = self.gym.create_sim(self.sim_device_id, self.graphics_device_id, self.physics_engine, self.sim_params)
+        mesh_type = self.cfg.terrain.mesh_type
+        if mesh_type in ['heightfield', 'trimesh']:
+            self.terrain = Terrain(self.cfg.terrain, self.num_envs)
+        if mesh_type=='plane':
+            self._create_ground_plane()
+        elif mesh_type=='heightfield':
+            self._create_heightfield()
+        elif mesh_type=='trimesh':
+            self._create_trimesh()
+        elif mesh_type is not None:
+            raise ValueError("Terrain mesh type not recognised. Allowed types are [None, plane, heightfield, trimesh]")
+        self._create_envs()
+    
+    def _create_envs(self):
+        """ Creates environments: call in __init_buffer()
+             1. loads the robot URDF/MJCF asset,
+             2. For each environment
+                2.1 creates the environment, 
+                2.2 calls DOF and Rigid shape properties callbacks,
+                2.3 create actor with these properties and add them to the env
+             3. Store indices of different bodies of the robot
+        """
+        asset_path = self.cfg.asset.file.format(LEGGED_GYM_ROOT_DIR=LEGGED_GYM_ROOT_DIR)
+        asset_root = os.path.dirname(asset_path)
+        asset_file = os.path.basename(asset_path)
+
+        asset_options = gymapi.AssetOptions()
+        asset_options.default_dof_drive_mode = self.cfg.asset.default_dof_drive_mode
+        asset_options.collapse_fixed_joints = self.cfg.asset.collapse_fixed_joints
+        asset_options.replace_cylinder_with_capsule = self.cfg.asset.replace_cylinder_with_capsule
+        asset_options.flip_visual_attachments = self.cfg.asset.flip_visual_attachments
+        asset_options.fix_base_link = self.cfg.asset.fix_base_link
+        asset_options.density = self.cfg.asset.density
+        asset_options.angular_damping = self.cfg.asset.angular_damping
+        asset_options.linear_damping = self.cfg.asset.linear_damping
+        asset_options.max_angular_velocity = self.cfg.asset.max_angular_velocity
+        asset_options.max_linear_velocity = self.cfg.asset.max_linear_velocity
+        asset_options.armature = self.cfg.asset.armature
+        asset_options.thickness = self.cfg.asset.thickness
+        asset_options.disable_gravity = self.cfg.asset.disable_gravity
+
+        robot_asset = self.gym.load_asset(self.sim, asset_root, asset_file, asset_options)
+        self.num_dof = self.gym.get_asset_dof_count(robot_asset)
+        self.num_bodies = self.gym.get_asset_rigid_body_count(robot_asset)
+        dof_props_asset = self.gym.get_asset_dof_properties(robot_asset)
+        rigid_shape_props_asset = self.gym.get_asset_rigid_shape_properties(robot_asset)
+
+        # save body names from the asset
+        body_names = self.gym.get_asset_rigid_body_names(robot_asset)
+        self.dof_names = self.gym.get_asset_dof_names(robot_asset)
+        self.num_bodies = len(body_names)
+        self.num_dofs = len(self.dof_names)
+        feet_names = [s for s in body_names if self.cfg.asset.foot_name in s]
+        penalized_contact_names = []
+        for name in self.cfg.asset.penalize_contacts_on:
+            penalized_contact_names.extend([s for s in body_names if name in s])
+        termination_contact_names = []
+        for name in self.cfg.asset.terminate_after_contacts_on:
+            termination_contact_names.extend([s for s in body_names if name in s])
+
+        base_init_state_list = self.cfg.init_state.pos + self.cfg.init_state.rot + self.cfg.init_state.lin_vel + self.cfg.init_state.ang_vel
+        self.base_init_state = to_torch(base_init_state_list, device=self.device, requires_grad=False)
+        start_pose = gymapi.Transform()
+        start_pose.p = gymapi.Vec3(*self.base_init_state[:3])
+        
+        # camera Sensor Preset properties/ attaching Rigid body / local transform
+        if self.cfg.camera.active:
+            camera_props = gymapi.CameraProperties()
+            camera_props.width = self.cfg.camera.img_width
+            camera_props.height = self.cfg.camera.img_height
+            camera_props.horizontal_fov = self.cfg.camera.horizontal_fov
+            camera_props.near_plane = self.cfg.camera.near_plane
+            camera_props.far_plane = self.cfg.camera.far_plane
+            camera_props.enable_tensors = self.cfg.camera.enable_tensors
+            
+            rigid_idx = self.gym.find_asset_rigid_body_index(robot_asset, self.cfg.camera.attach_rigid_name)
+            
+            camera_local_transform = gymapi.Transform()
+            camera_local_transform.p = self.cfg.camera.offset_position
+            camera_local_transform.r = self.cfg.camera.offset_rotation
+
+        self._get_env_origins()
+        env_lower = gymapi.Vec3(0., 0., 0.)
+        env_upper = gymapi.Vec3(0., 0., 0.)
+        self.actor_handles = []
+        self.envs = []
+        self.camera_handles = []
+        for i in range(self.num_envs):
+            # create env instance
+            env_handle = self.gym.create_env(self.sim, env_lower, env_upper, int(np.sqrt(self.num_envs)))
+            pos = self.env_origins[i].clone()
+            pos[:2] += torch_rand_float(-1., 1., (2,1), device=self.device).squeeze(1)
+            start_pose.p = gymapi.Vec3(*pos)
+            rigid_shape_props = self._process_rigid_shape_props(rigid_shape_props_asset, i)
+            self.gym.set_asset_rigid_shape_properties(robot_asset, rigid_shape_props)
+            actor_handle = self.gym.create_actor(env_handle, robot_asset, start_pose, self.cfg.asset.name, i, self.cfg.asset.self_collisions, 0)
+            dof_props = self._process_dof_props(dof_props_asset, i)
+            self.gym.set_actor_dof_properties(env_handle, actor_handle, dof_props)
+            body_props = self.gym.get_actor_rigid_body_properties(env_handle, actor_handle)
+            body_props = self._process_rigid_body_props(body_props, i)
+            self.gym.set_actor_rigid_body_properties(env_handle, actor_handle, body_props, recomputeInertia=True)
+            self.envs.append(env_handle)
+            self.actor_handles.append(actor_handle)
+            
+            if self.cfg.camera.active:
+                camera_handle = self.gym.create_camera_sensor(env_handle, camera_props) # create camera handle
+                rigid_handle = self.gym.get_actor_rigid_body_handle(env_handle, actor_handle, rigid_idx) # create attach rigid body
+                self.gym.attach_camera_to_body(camera_handle, env_handle, rigid_handle, camera_local_transform, gymapi.FOLLOW_TRANSFORM) # attach camera to rigid body
+                self.camera_handles.append(camera_handle)
+
+        self.feet_indices = torch.zeros(len(feet_names), dtype=torch.long, device=self.device, requires_grad=False)
+        for i in range(len(feet_names)):
+            self.feet_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.actor_handles[0], feet_names[i])
+
+        self.penalised_contact_indices = torch.zeros(len(penalized_contact_names), dtype=torch.long, device=self.device, requires_grad=False)
+        for i in range(len(penalized_contact_names)):
+            self.penalised_contact_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.actor_handles[0], penalized_contact_names[i])
+
+        self.termination_contact_indices = torch.zeros(len(termination_contact_names), dtype=torch.long, device=self.device, requires_grad=False)
+        for i in range(len(termination_contact_names)):
+            self.termination_contact_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.actor_handles[0], termination_contact_names[i])
+    
+    #------------- Step --------------
+    def step(self, actions):
+        """ Apply actions, simulate, call self.post_physics_step()
+
+        Args:
+            actions (torch.Tensor): Tensor of shape (num_envs, num_actions_per_env)
+        """
+        clip_actions = self.cfg.normalization.clip_actions
+        self.actions = torch.clip(actions, -clip_actions, clip_actions).to(self.device)
+        # step physics and render each frame
+        self.render()
+        for _ in range(self.cfg.control.decimation):
+            self.torques = self._compute_torques(self.actions).view(self.torques.shape)
+            self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self.torques))
+            self.gym.simulate(self.sim)
+            if self.device == 'cpu':
+                self.gym.fetch_results(self.sim, True)
+            self.gym.refresh_dof_state_tensor(self.sim)
+        self.post_physics_step()
+
+        # return clipped obs, clipped states (None), rewards, dones and infos
+        clip_obs = self.cfg.normalization.clip_observations
+        self.obs_buf = torch.clip(self.obs_buf, -clip_obs, clip_obs)
+        if self.privileged_obs_buf is not None:
+            self.privileged_obs_buf = torch.clip(self.privileged_obs_buf, -clip_obs, clip_obs)
+        return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras
+    
     def post_physics_step(self):
         """ check terminations, compute observations and rewards
             calls self._post_physics_step_callback() for common computations 
@@ -77,6 +273,13 @@ class AnymalNav(LeggedRobot):
         """
         self.gym.refresh_actor_root_state_tensor(self.sim)
         self.gym.refresh_net_contact_force_tensor(self.sim)
+        
+        if self.cfg.camera.active:
+            self.gym.render_all_camera_sensors(self.sim)
+            self.gym.start_access_image_tensors(self.sim)
+      
+            self.gym.end_access_image_tensors(self.sim)
+            
 
         self.episode_length_buf += 1
         self.common_step_counter += 1
@@ -120,29 +323,6 @@ class AnymalNav(LeggedRobot):
         # Additionaly empty actuator network hidden states
         self.sea_hidden_state_per_env[:, env_ids] = 0.
         self.sea_cell_state_per_env[:, env_ids] = 0.
-
-    def _init_buffers(self):
-        super()._init_buffers()
-        # Additionally initialize buffer for obs and compute reward
-        self.commands_scale = torch.tensor([self.obs_scales.lin_vel, 
-                                            self.obs_scales.lin_vel, 
-                                            self.obs_scales.height_measurements, 
-                                            self.obs_scales.dof_pos,
-                                            self.obs_scales.dof_pos,
-                                            self.obs_scales.dof_pos], device=self.device, requires_grad=False,) 
-        
-        base_euler = torch.stack(list(get_euler_xyz(self.base_quat)), dim=1)
-        self.base_euler = torch.where(base_euler>math.pi, (-2*math.pi)+base_euler, base_euler)
-        self.base_mean_height = torch.mean(self.root_states[:, 2].unsqueeze(1) - self.measured_heights, dim=1)
-        
-        self.command_own = torch.zeros(self.num_envs, self.cfg.commands.num_commands, dtype=float, device=self.device, requires_grad=False)
-        
-        # Additionally initialize actuator network hidden state tensors
-        self.sea_input = torch.zeros(self.num_envs*self.num_actions, 1, 2, device=self.device, requires_grad=False)
-        self.sea_hidden_state = torch.zeros(2, self.num_envs*self.num_actions, 8, device=self.device, requires_grad=False)
-        self.sea_cell_state = torch.zeros(2, self.num_envs*self.num_actions, 8, device=self.device, requires_grad=False)
-        self.sea_hidden_state_per_env = self.sea_hidden_state.view(2, self.num_envs, self.num_actions, 8)
-        self.sea_cell_state_per_env = self.sea_cell_state.view(2, self.num_envs, self.num_actions, 8)
     
     def compute_observations(self):
         """ Computes observations
@@ -271,7 +451,7 @@ class AnymalNav(LeggedRobot):
             if self.cfg.terrain.curriculum == True:
                 self.logger.log_states({'terrain_level': self.terrain_levels.float().mean(0)})
             
-            
+    #------------- Draw Visualization --------------    
     def _draw_debug_vis(self):
         """ Draws visualizations for dubugging (slows down simulation a lot).
             Default behaviour: draws height measurement points
@@ -279,8 +459,7 @@ class AnymalNav(LeggedRobot):
         # draw height lines
         if not self.terrain.cfg.measure_heights:
             return
-        # self.gym.clear_lines(self.viewer)
-        # self.gym.refresh_rigid_body_state_tensor(self.sim)
+
         sphere_geom = gymutil.WireframeSphereGeometry(0.02, 4, 4, None, color=(1, 1, 0))
         for i in range(self.num_envs):
             base_pos = (self.root_states[i, :3]).cpu().numpy()
@@ -294,8 +473,6 @@ class AnymalNav(LeggedRobot):
                 gymutil.draw_lines(sphere_geom, self.gym, self.viewer, self.envs[i], sphere_pose) 
     
     def _draw_commands_vis(self):
-        # self.gym.clear_lines(self.viewer)
-        # self.gym.refresh_rigid_body_state_tensor(self.sim)
         plane_geom_command = gymutil.WireframeBoxGeometry(2, 2, 0.005, None, color=(0, 1, 0))
         plane_geom_measure = gymutil.WireframeBoxGeometry(2, 2, 0.005, None, color=(1, 1, 0))
         axes_geom = gymutil.AxesGeometry(scale=1, pose=None)
@@ -345,11 +522,7 @@ class AnymalNav(LeggedRobot):
             axes_pose = gymapi.Transform(gymapi.Vec3(x, y, z), gymapi.Quat(command_quat[0], command_quat[1], command_quat[2], command_quat[3]))
             gymutil.draw_lines(axes_geom, self.gym, self.viewer, self.envs[i], axes_pose)
     
-    def _command_tracking(self):
-        # funtion plot tracking command while play policy
-        roll, pitch, yaw = get_euler_xyz(self.root_states[:, 3:7])
-    
-    #------------my additional reward functions----------------
+    #------------ My Additional Reward Functions ----------------
     def _reward_tracking_lin_vel(self):
         # Tracking of linear velocity commands (xy axes)
         lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
@@ -381,3 +554,5 @@ class AnymalNav(LeggedRobot):
             return torch.clip(1-(orientation_error/self.cfg.rewards.reward_tracking_accept['orientation']), 0, 1)
         if self.cfg.rewards.reward_tracking == 'gaussian': 
             return torch.exp(-(orientation_error**2)/(self.cfg.rewards.tracking_orientation))
+        
+    

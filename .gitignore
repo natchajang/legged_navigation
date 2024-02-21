@@ -1,2 +1,3 @@
 # Test saved image
 *.png
+/logs
