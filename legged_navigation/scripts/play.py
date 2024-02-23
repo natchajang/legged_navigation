@@ -29,6 +29,7 @@
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
 # append root path of project to find all module in project
+#test
 import sys
 sys.path.append("/home/natcha/github/legged_navigation")
 
