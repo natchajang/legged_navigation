@@ -29,7 +29,6 @@
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
 # append root path of project to find all module in project
-#test
 import sys
 sys.path.append("/home/natcha/github/legged_navigation")
 
@@ -65,7 +64,7 @@ def play(args):
     if args.debug_viz:
         env.debug_viz = True
     # add open command visualization
-    if args.command_viz and isinstance(env, AnymalEdit):
+    if args.command_viz and isinstance(env, AnymalNav):
         env.commands_viz = True
         
     # load policy

@@ -3,6 +3,7 @@ from torchvision.utils import save_image
 import numpy as np
 import torch
 from PIL import Image
+import cv2
 
 gym = gymapi.acquire_gym()
 
@@ -65,7 +66,7 @@ camera_props.enable_tensors = True
 
 ###### Create env and actor handles
 # cache useful handles
-num_envs = 1
+num_envs = 2
 spacing = 1.0
 env_lower = gymapi.Vec3(-spacing, 0.0, -spacing)
 env_upper = gymapi.Vec3(spacing, spacing, spacing)
@@ -107,8 +108,7 @@ for i in range(num_envs):
     beta = 0.04715
     gamma = 0.0292
     theta = 0.523598775598
-    # x = 0.4145 + (np.cos(theta)*beta) - (np.sin(theta) * gamma)
-    # z = -(np.cos(theta)*gamma) - (np.sin(theta) * beta)
+
     x = 0.4145 + beta
     z = -gamma
     local_transform = gymapi.Transform(p=gymapi.Vec3(x,0,z), r=gymapi.Quat.from_euler_zyx(0, 0.523598775598, 0))
@@ -127,15 +127,14 @@ for i in range(num_envs):
     gym.attach_camera_to_body(camera_handle, env, rigid_handle, local_transform, gymapi.FOLLOW_TRANSFORM)
     
     # define camera tensor
-    camera_tensor = gym.get_camera_image_gpu_tensor(sim, env, camera_handle, gymapi.IMAGE_COLOR)
-    # camera_tensor = gym.get_camera_image_gpu_tensor(sim, env, camera_handles[0], gymapi.IMAGE_DEPTH)
+    # camera_tensor = gym.get_camera_image_gpu_tensor(sim, env, camera_handle, gymapi.IMAGE_COLOR)
+    camera_tensor = gym.get_camera_image_gpu_tensor(sim, env, camera_handles[0], gymapi.IMAGE_DEPTH)
     torch_camera_tensor = gymtorch.wrap_tensor(camera_tensor) # the tensor will update auto
+    print(torch_camera_tensor.shape)
     camera_tensors.append(torch_camera_tensor)
 
 tt = torch.stack(camera_tensors)
 print(tt.shape)
-print(tt)
-
 depth_camera_handle = gym.get_actor_rigid_body_handle(env, actor_handle, 44)
 base_handle = gym.get_actor_rigid_body_handle(env, actor_handle, 0)
 sphere_camera = gymutil.WireframeSphereGeometry(0.01, 10, 10, None, color=(1, 1, 0))
@@ -171,26 +170,34 @@ while not gym.query_viewer_has_closed(viewer):
     
     gym.render_all_camera_sensors(sim) # !!! dont for get to update data in tensor
     gym.start_access_image_tensors(sim)
+
+    tt = torch.cat(camera_tensors)
+
+    # move data to cpu
+    # depth_image = tt.cpu().numpy()
+    # -inf implies no depth value, set it to zero. output will be black.
+    tt[tt == -np.inf] = 0
+    # clamp depth image to 10 meters to make output image human friendly
+    tt[tt < -1] = -1
+    # flip the direction so near-objects are light and far objects are dark
+    normalized_depth = -255.0*(tt/torch.min(tt + 1e-4))
+    normalized_dept_numpy = normalized_depth.cpu().numpy()
     
-    # # move data to cpu
-    # depth_image = torch_camera_tensor.cpu().numpy()
-    # # -inf implies no depth value, set it to zero. output will be black.
-    # depth_image[depth_image == -np.inf] = 0
-    # # clamp depth image to 10 meters to make output image human friendly
-    # depth_image[depth_image < -10] = -10
-    # # flip the direction so near-objects are light and far objects are dark
-    # normalized_depth = -255.0*(depth_image/np.min(depth_image + 1e-4))
+    # for e in range(tt.shape[0]):
     
-    im = Image.fromarray(torch_camera_tensor[:, :, :3].cpu().numpy())
-    # im = Image.fromarray(normalized_depth.astype(np.uint8), mode="L")
-    # im.save("{}/{}.png".format(img_path, i))
+    # im = Image.fromarray(tt[:, :, :3].cpu().numpy())
+    print(normalized_dept_numpy)
+    cv2.imshow('Frame', normalized_dept_numpy.astype(np.uint8))
+    cv2.waitKey(1) 
+
+    im = Image.fromarray(normalized_dept_numpy.astype(np.uint8), mode="L")
+    im.save("{}/frame{}.png".format(img_path, i))
     i += 1
     
     cam_position = gym.get_camera_transform(sim, env, camera_handle)
     rigid_ref_position = gym.get_rigid_transform(env, depth_camera_handle)
     rigid_face_front = gym.get_rigid_transform(env, face_front_handle)
     rigid_base = gym.get_rigid_transform(env, base_handle)
-    
     
     gym.clear_lines(viewer)
     
@@ -200,8 +207,6 @@ while not gym.query_viewer_has_closed(viewer):
     point = transface.transform_point(point)
     # point = transbase_ore.transform_vector(point)
     point = transface.transform_point(point)
-    
-    # axes_pose = gymapi.Transform(p=point, r=None)
     
     # print(cam_position.p)
     print("base p", rigid_base.p)
@@ -229,3 +234,4 @@ print("Done")
 
 gym.destroy_viewer(viewer)
 gym.destroy_sim(sim)
+cv2.destroyAllWindows() 

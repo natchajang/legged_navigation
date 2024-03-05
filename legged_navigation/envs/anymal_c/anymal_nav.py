@@ -33,6 +33,8 @@ import numpy as np
 import math
 import statistics
 import os
+from PIL import Image
+import cv2
 
 from isaacgym.torch_utils import *
 from isaacgym import gymtorch, gymapi, gymutil
@@ -54,9 +56,20 @@ class AnymalNav(LeggedRobot):
     #------------- Init --------------
     def __init__(self, cfg, sim_params, physics_engine, sim_device, headless):
         super().__init__(cfg, sim_params, physics_engine, sim_device, headless)
+
+        # allocate buffers
+        if self.cfg.camera.active:
+            if self.cfg.camera.imgae_type == gymapi.IMAGE_DEPTH: 
+                self.camera_obs_buf = torch.zeros(self.num_envs, self.cfg.camera.img_height, self.cfg.camera.img_width, device=self.device, dtype=torch.float)
+            elif self.cfg.camera.imgae_type == gymapi.IMAGE_COLOR:
+                self.camera_obs_buf = torch.zeros(self.num_envs, self.cfg.camera.img_height, self.cfg.camera.img_width, 4, device=self.device, dtype=torch.float)
+
         # addition attributes
-        self.commands_viz = False                           # for visualize command 
-        self.command_set_flag = False                       # flag for set command without resample
+        self.commands_viz = False                           # for visualizing command (plane of base height / direction and ampitude of velocity / axis of desired base orientation)
+        self.command_set_flag = False                       # flag for setting command without resample
+        self.camera_image_viz = True                        # flag for visualizing image from camera sensor
+
+        # for log save
         self.logger = Logger(self.dt)                       # logger for saving training history
         self.reward_saved_dict = defaultdict(list)          
         self.count_steps = 0                                # for count step if mod self.num_steps_per_env if = 0 save log of reward
@@ -97,8 +110,8 @@ class AnymalNav(LeggedRobot):
         
         # camera sensor buffer
         if self.cfg.camera.active:
-            camera_list = [] # list to collect each camera tensor
-            self.gym.simulate(self.sim)
+            self.camera_tensor_list = [] # list to collect each camera tensor
+
             self.gym.fetch_results(self.sim, True)
             self.gym.step_graphics(self.sim)
             self.gym.render_all_camera_sensors(self.sim)
@@ -107,10 +120,10 @@ class AnymalNav(LeggedRobot):
             for i, c in enumerate(self.camera_handles):
                 _camera_tensor = self.gym.get_camera_image_gpu_tensor(self.sim, self.envs[i], c, self.cfg.camera.imgae_type)
                 camera_tensor = gymtorch.wrap_tensor(_camera_tensor)
-                camera_list.append(camera_tensor)
+                self.camera_tensor_list.append(camera_tensor)
                 
+            self.camera_images = torch.stack(self.camera_tensor_list) # camera data tensor size (num_env, height, width, 1 or 4)
             self.gym.end_access_image_tensors(self.sim)
-            self.cemera_tensors = torch.stack(camera_list) # change list to tensor
 
     def create_sim(self):
         """ Creates simulation, terrain and evironments
@@ -274,12 +287,16 @@ class AnymalNav(LeggedRobot):
         self.gym.refresh_actor_root_state_tensor(self.sim)
         self.gym.refresh_net_contact_force_tensor(self.sim)
         
+        # update image data from camera tensor list
         if self.cfg.camera.active:
+            if not self.viewer:
+                self.gym.fetch_results(self.sim, True)
+                self.gym.step_graphics(self.sim)
+
             self.gym.render_all_camera_sensors(self.sim)
             self.gym.start_access_image_tensors(self.sim)
-      
+            self.camera_images = torch.stack(self.camera_tensor_list)
             self.gym.end_access_image_tensors(self.sim)
-            
 
         self.episode_length_buf += 1
         self.common_step_counter += 1
@@ -317,6 +334,8 @@ class AnymalNav(LeggedRobot):
                 self._draw_debug_vis()
             if self.commands_viz:
                 self._draw_commands_vis()
+            if self.camera_image_viz:
+                self._camera_image_vis(0)
     
     def reset_idx(self, env_ids):
         super().reset_idx(env_ids)
@@ -345,6 +364,10 @@ class AnymalNav(LeggedRobot):
         # add noise if needed
         if self.add_noise:
             self.obs_buf += (2 * torch.rand_like(self.obs_buf) - 1) * self.noise_scale_vec
+        # add camera sensor data
+        if self.cfg.camera.active:
+            self.image_preprocessing()
+            self.camera_obs_buf = self.camera_images
     
     def _compute_torques(self, actions):
         # Choose between pd controller and actuator network
@@ -450,8 +473,23 @@ class AnymalNav(LeggedRobot):
             self.logger.log_states({'command_level': self.command_level.copy()})
             if self.cfg.terrain.curriculum == True:
                 self.logger.log_states({'terrain_level': self.terrain_levels.float().mean(0)})
+
+    #------------- image preprocess ----------------
+    def image_preprocessing(self):
+        if self.cfg.camera.imgae_type == gymapi.IMAGE_DEPTH: 
+            # depth image is the negative distance from camera to pixel in view direction in world coordinate units (meters)
+            print("0. Min: {} / Max: {}".format(torch.min(self.camera_images), torch.max(self.camera_images)))
+            # 1. -inf implies no depth value, set it to zero. output will be black.
+            self.camera_images[self.camera_images == -np.inf] = 0
+            print("1. Min: {} / Max: {}".format(torch.min(self.camera_images), torch.max(self.camera_images)))
+            # # 2. clamp depth image to xx(cfg.camera.clamp_distance) meters to make output image human friendly
+            # self.camera_images[self.camera_images < -self.cfg.camera.clamp_distance] = -self.cfg.camera.clamp_distance
+            print("2. Min: {} / Max: {}".format(torch.min(self.camera_images), torch.max(self.camera_images)))
+            # 3. flip the direction so near-objects are light and far objects are dark
+            self.camera_images = -255.0*(self.camera_images/torch.min(self.camera_images))
+            print("3. Min: {} / Max: {}".format(torch.min(self.camera_images), torch.max(self.camera_images)))
             
-    #------------- Draw Visualization --------------    
+    #------------- Visualization ----------------    
     def _draw_debug_vis(self):
         """ Draws visualizations for dubugging (slows down simulation a lot).
             Default behaviour: draws height measurement points
@@ -521,6 +559,22 @@ class AnymalNav(LeggedRobot):
             # Draw orientation
             axes_pose = gymapi.Transform(gymapi.Vec3(x, y, z), gymapi.Quat(command_quat[0], command_quat[1], command_quat[2], command_quat[3]))
             gymutil.draw_lines(axes_geom, self.gym, self.viewer, self.envs[i], axes_pose)
+
+    # function to show image from camera in specific environment id
+    def _camera_image_vis(self, env_id):
+        # locate camera position and orietation (if enable this axes will appear in image as well !!!)
+        # cam_position = self.gym.get_camera_transform(self.sim, self.envs[env_id], self.actor_handles[env_id])
+        # axes_geom = gymutil.AxesGeometry(scale=0.5, pose=None)
+        # axes_pose = gymapi.Transform(cam_position.p, cam_position.r)
+        # gymutil.draw_lines(axes_geom, self.gym, self.viewer, self.envs[env_id], axes_pose)
+
+        # show image
+        if self.cfg.camera.imgae_type == gymapi.IMAGE_DEPTH:
+            frame = self.camera_images[env_id].cpu().numpy().astype(np.uint8)
+        elif self.cfg.camera.imgae_type == gymapi.IMAGE_COLOR:
+            frame = self.camera_images[env_id, :, :, :3].cpu().numpy()
+        cv2.imshow('Frame', frame) 
+        cv2.waitKey(1) 
     
     #------------ My Additional Reward Functions ----------------
     def _reward_tracking_lin_vel(self):

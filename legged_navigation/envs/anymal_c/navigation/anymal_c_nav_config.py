@@ -116,7 +116,7 @@ class AnymalCNavCfg( LeggedRobotCfg ):
         penalize_contacts_on = ["SHANK", "THIGH"]
         terminate_after_contacts_on = ["base"]
         self_collisions = 1 # 1 to disable, 0 to enable...bitwise filter
-        collapse_fixed_joints = False
+        collapse_fixed_joints = True
         
     class camera:
         # spec refer to anymal c data sheet: 0.3—3 m range, 87.3 × 58.1 × 95.3º depth FOV (Horizontal / Vertical / Diagonal) 
@@ -132,6 +132,9 @@ class AnymalCNavCfg( LeggedRobotCfg ):
         near_plane = 0.3
         far_plane = 3
         enable_tensors = True
+
+        # preprocessing image
+        clamp_distance = 3 # min distance to clamp in meters (only on depth image)
 
     class normalization:
         class obs_scales:

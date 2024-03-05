@@ -30,4 +30,4 @@ if __name__ == '__main__':
     print(env.reward_names)
     print(env.reward_scales)
     print(env.num_envs)
-    print(isinstance(env, AnymalEdit))
+    print(isinstance(env, AnymalNav))
