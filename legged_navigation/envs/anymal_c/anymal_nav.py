@@ -483,10 +483,10 @@ class AnymalNav(LeggedRobot):
             self.camera_images[self.camera_images == -np.inf] = 0
             print("1. Min: {} / Max: {}".format(torch.min(self.camera_images), torch.max(self.camera_images)))
             # # 2. clamp depth image to xx(cfg.camera.clamp_distance) meters to make output image human friendly
-            # self.camera_images[self.camera_images < -self.cfg.camera.clamp_distance] = -self.cfg.camera.clamp_distance
+            self.camera_images[self.camera_images < -self.cfg.camera.clamp_distance] = -self.cfg.camera.clamp_distance
             print("2. Min: {} / Max: {}".format(torch.min(self.camera_images), torch.max(self.camera_images)))
             # 3. flip the direction so near-objects are light and far objects are dark
-            self.camera_images = -255.0*(self.camera_images/torch.min(self.camera_images))
+            self.camera_images = -255.0*(self.camera_images/torch.min(self.camera_images + 1e-4))
             print("3. Min: {} / Max: {}".format(torch.min(self.camera_images), torch.max(self.camera_images)))
             
     #------------- Visualization ----------------    
@@ -563,10 +563,10 @@ class AnymalNav(LeggedRobot):
     # function to show image from camera in specific environment id
     def _camera_image_vis(self, env_id):
         # locate camera position and orietation (if enable this axes will appear in image as well !!!)
-        # cam_position = self.gym.get_camera_transform(self.sim, self.envs[env_id], self.actor_handles[env_id])
-        # axes_geom = gymutil.AxesGeometry(scale=0.5, pose=None)
-        # axes_pose = gymapi.Transform(cam_position.p, cam_position.r)
-        # gymutil.draw_lines(axes_geom, self.gym, self.viewer, self.envs[env_id], axes_pose)
+        cam_position = self.gym.get_camera_transform(self.sim, self.envs[env_id], self.actor_handles[env_id])
+        axes_geom = gymutil.AxesGeometry(scale=0.5, pose=None)
+        axes_pose = gymapi.Transform(cam_position.p, cam_position.r)
+        gymutil.draw_lines(axes_geom, self.gym, self.viewer, self.envs[env_id], axes_pose)
 
         # show image
         if self.cfg.camera.imgae_type == gymapi.IMAGE_DEPTH:

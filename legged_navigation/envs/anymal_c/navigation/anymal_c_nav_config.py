@@ -233,6 +233,10 @@ class AnymalCNavCfgPPO( LeggedRobotCfgPPO ):
         actor_hidden_dims = [512, 256, 128]
         critic_hidden_dims = [512, 256, 128]
         activation = 'elu' # can be elu, relu, selu, crelu, lrelu, tanh, sigmoid
+
+        # for only CNN network
+        actor_con2D_parameters = [[10, (5,5), (5,5)]]
+        critic_con2D_parameters = [[10, (5,5), (5,5)]]
     
     class algorithm ( LeggedRobotCfgPPO.algorithm ):
         # training params
