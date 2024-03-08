@@ -30,18 +30,10 @@
 
 import numpy as np
 
-from isaacgym import gymapi
-
 import torch
 import torch.nn as nn
 from torch.distributions import Normal
 from torch.nn.modules import rnn
-
-# will delete after testing
-import sys
-sys.path.append("/home/natcha/github/legged_navigation")
-from legged_navigation.envs.anymal_c.navigation.anymal_c_nav_config import AnymalCNavCfg, AnymalCNavCfgPPO
-
 
 class ActorCritic(nn.Module):
     is_recurrent = False
@@ -53,34 +45,10 @@ class ActorCritic(nn.Module):
                         activation='elu',
                         init_noise_std=1.0,
                         **kwargs):
-        
+        if kwargs:
+            print("ActorCritic.__init__ got unexpected arguments, which will be ignored: " + str([key for key in kwargs.keys()]))
         super(ActorCritic, self).__init__()
 
-        self.cnn = False    # if camera sensor activate will create cnn structure and activate this flag
-
-        # if kwargs and kwargs['camera_cfg'].active == True:
-        #     print("ActorCritic CNN Structure: " + str([key for key in kwargs.keys()]))
-        #     # self.cnn = True
-        #     self.actor = CNNNet(img_type = kwargs['camera_cfg'].imgae_type,
-        #                         img_height = kwargs['camera_cfg'].img_height,
-        #                         img_width = kwargs['camera_cfg'].img_width,
-        #                         num_state_obs = num_actor_obs,
-        #                         num_actions = num_actions,
-        #                         con2D_parameters = kwargs['policy_cfg'].actor_con2D_parameters,
-        #                         combine_hidden_dims = actor_hidden_dims,
-        #                         activation = activation)
-            
-        #     self.critic = CNNNet(img_type = kwargs['camera_cfg'].imgae_type,
-        #                         img_height = kwargs['camera_cfg'].img_height,
-        #                         img_width = kwargs['camera_cfg'].img_width,
-        #                         num_state_obs = num_critic_obs,
-        #                         num_actions = num_actions,
-        #                         con2D_parameters = kwargs['policy_cfg'].critic_con2D_parameters,
-        #                         combine_hidden_dims = critic_hidden_dims,
-        #                         activation = activation)
-
-        # else:
-        print("ActorCritic MLP Structure")
         activation = get_activation(activation)
 
         mlp_input_dim_a = num_actor_obs
@@ -109,7 +77,6 @@ class ActorCritic(nn.Module):
                 critic_layers.append(nn.Linear(critic_hidden_dims[l], critic_hidden_dims[l + 1]))
                 critic_layers.append(activation)
         self.critic = nn.Sequential(*critic_layers)
-
 
         print(f"Actor MLP: {self.actor}")
         print(f"Critic MLP: {self.critic}")
@@ -149,35 +116,23 @@ class ActorCritic(nn.Module):
     def entropy(self):
         return self.distribution.entropy().sum(dim=-1)
 
-    def update_distribution(self, observations, **kwargs):
-        if self.cnn:
-            mean = self.actor(kwargs, observations)             # kwargs is image from camera sensor
-        else:
-            mean = self.actor(observations)
+    def update_distribution(self, observations):
+        mean = self.actor(observations)
         self.distribution = Normal(mean, mean*0. + self.std)
 
     def act(self, observations, **kwargs):
-        if self.cnn:
-            self.update_distribution(kwargs, observations)      # kwargs is image from camera sensor
-        else:
-            self.update_distribution(observations)
+        self.update_distribution(observations)
         return self.distribution.sample()
     
     def get_actions_log_prob(self, actions):
         return self.distribution.log_prob(actions).sum(dim=-1)
 
-    def act_inference(self, observations, **kwargs):
-        if self.cnn:
-            actions_mean = self.actor(kwargs, observations)      # kwargs is image from camera sensor
-        else:
-            actions_mean = self.actor(observations)
+    def act_inference(self, observations):
+        actions_mean = self.actor(observations)
         return actions_mean
 
     def evaluate(self, critic_observations, **kwargs):
-        if self.cnn:
-            value = self.critic(kwargs, critic_observations)     # kwargs is image from camera sensor
-        else:
-            value = self.critic(critic_observations)
+        value = self.critic(critic_observations)
         return value
 
 def get_activation(act_name):
@@ -198,81 +153,3 @@ def get_activation(act_name):
     else:
         print("invalid activation function!")
         return None
-    
-class CNNNet(nn.Module):
-    def __init__(self,  img_type,
-                        img_height,
-                        img_width,
-                        num_state_obs,
-                        num_actions = 12,
-                        con2D_parameters = [[10, (5,5), (5,5)]], #  [[channels_out_1, kernel_size_1/ stride_1], ... [...]]
-                        combine_hidden_dims = [512, 256, 128],
-                        activation = 'elu'):
-        
-        super(CNNNet, self).__init__()
-
-        #------------------- Image branch -------------------
-        if img_type == gymapi.IMAGE_DEPTH:
-            in_channels = 1
-        elif img_type == gymapi.IMAGE_COLOR:
-            in_channels = 3
-
-        conv2D_layers = []
-        out_channels = con2D_parameters[0][0]
-        kernel_size = con2D_parameters[0][1]
-        stride_size = con2D_parameters[0][2]
-        h = np.floor(((img_height - kernel_size[0]) / stride_size[0]) + 1)
-        w = np.floor(((img_width - kernel_size[1]) / stride_size[1]) + 1)
-        
-        conv2D_layers.append(nn.Conv2d(in_channels=in_channels, 
-                                       out_channels=out_channels, 
-                                       kernel_size=kernel_size, 
-                                       stride=stride_size,
-                                       padding=(0, 0),
-                                       dilation=(1,1)))
-
-        for l in range(1, len(con2D_parameters)):
-            in_channels = con2D_parameters[l-1][0]
-            out_channels = con2D_parameters[l][0]
-            kernel_size = con2D_parameters[l][1]
-            stride_size = con2D_parameters[l][2]
-            conv2D_layers.append(nn.Conv2d(in_channels=in_channels, 
-                                            out_channels=out_channels, 
-                                            kernel_size=kernel_size, 
-                                            stride=stride_size,
-                                            padding=(0, 0),
-                                            dilation=(1,1)))
-            h = np.floor(((h - kernel_size[0]) / stride_size[0]) + 1)
-            w = np.floor(((w - kernel_size[1]) / stride_size[1]) + 1)
-
-        conv2D_layers.append(nn.Flatten())
-        self.conv2D = nn.Sequential(*conv2D_layers)
-
-        #------------------- Layers after combine -------------------
-        mlp_input_dim = int(h * w * con2D_parameters[-1][0])
-
-        fc_layers = []
-        fc_layers.append(nn.Linear(mlp_input_dim + num_state_obs, combine_hidden_dims[0]))
-        fc_layers.append(get_activation(activation))
-        for l in range(len(combine_hidden_dims)):
-            if l == len(combine_hidden_dims) - 1:
-                fc_layers.append(nn.Linear(combine_hidden_dims[l], num_actions))
-            else:
-                fc_layers.append(nn.Linear(combine_hidden_dims[l], combine_hidden_dims[l + 1]))
-                fc_layers.append(get_activation(activation))
-
-        self.mlp = nn.Sequential(*fc_layers)
-
-    def forward(self, img, state):
-        # Image branch
-        img = self.conv2D(img)
-
-        # Combine image and 
-        x = torch.cat([img, state], dim=1)
-        x = self.mlp(x)
-
-        return x
-
-env_cfg = AnymalCNavCfg()
-train_cfg = AnymalCNavCfgPPO()
-test_model = ActorCritic(55, 55, 12, camera_cfg=env_cfg.camera, policy_cfg=train_cfg.policy)
