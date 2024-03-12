@@ -53,14 +53,15 @@ def train(args):
     print("task: {} run name: {}------------------------".format(args.task, train_cfg.runner.run_name))
     print("num_envs : {} mesh_type : {}".format(env.num_envs, env.cfg.terrain.mesh_type))
     print("State space\n num_observations: {}\n measure height: {}\n".format(env_cfg.env.num_observations, env_cfg.terrain.measure_heights))
-    # if print("Reward\n function type:{}\n".format(env_cfg.rewards.reward_tracking))
+    if isinstance(env_cfg, AnymalCNavCfg): print("Reward\n function type:{}\n".format(env_cfg.rewards.reward_tracking))
+    if isinstance(env_cfg, AnymalCNavCfg): print("Camera Sensor\n Active: {}\n Image Type: {}\n".format(env_cfg.camera.active, env_cfg.camera.image_type))
     print("Terrain\n mesh type: {}\n ".format(env_cfg.terrain.mesh_type))
     print("Techniuqe\n terrain cur: {}\n command cur: {}\n positive rew: {}\n".format(env_cfg.terrain.curriculum,
                                                                                     env_cfg.commands.curriculum,
                                                                                     env_cfg.rewards.only_positive_rewards))
-    print("Resume : {}".format(train_cfg.runner.resume))
+    print("Resume : {}\n".format(train_cfg.runner.resume))
     print("----------------------------------------------")
-    
+
     # train ppo
     ppo_runner.learn(num_learning_iterations=train_cfg.runner.max_iterations, init_at_random_ep_len=True)
     

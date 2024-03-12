@@ -38,6 +38,7 @@ class RolloutStorage:
         def __init__(self):
             self.observations = None
             self.critic_observations = None
+            self.camera_observations = None
             self.actions = None
             self.rewards = None
             self.dones = None
@@ -50,12 +51,11 @@ class RolloutStorage:
         def clear(self):
             self.__init__()
 
-    def __init__(self, num_envs, num_transitions_per_env, obs_shape, privileged_obs_shape, actions_shape, device='cpu'):
-
+    def __init__(self, num_envs, num_transitions_per_env, obs_shape, privileged_obs_shape, actions_shape, device='cpu', **kwargs):
         self.device = device
-
         self.obs_shape = obs_shape
         self.privileged_obs_shape = privileged_obs_shape
+        self.camera_obs_shape = None
         self.actions_shape = actions_shape
 
         # Core
@@ -64,6 +64,12 @@ class RolloutStorage:
             self.privileged_observations = torch.zeros(num_transitions_per_env, num_envs, *privileged_obs_shape, device=self.device)
         else:
             self.privileged_observations = None
+        if kwargs:
+            self.camera_obs_shape = kwargs['camera_obs_shape']
+            self.camera_observations = torch.zeros(num_transitions_per_env, num_envs, *self.camera_obs_shape, device=self.device)
+        else:
+            self.camera_observations = None
+
         self.rewards = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device)
         self.actions = torch.zeros(num_transitions_per_env, num_envs, *actions_shape, device=self.device)
         self.dones = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device).byte()
@@ -90,6 +96,8 @@ class RolloutStorage:
             raise AssertionError("Rollout buffer overflow")
         self.observations[self.step].copy_(transition.observations)
         if self.privileged_observations is not None: self.privileged_observations[self.step].copy_(transition.critic_observations)
+        if self.camera_observations is not None: 
+            self.camera_observations[self.step].copy_(transition.camera_observations)
         self.actions[self.step].copy_(transition.actions)
         self.rewards[self.step].copy_(transition.rewards.view(-1, 1))
         self.dones[self.step].copy_(transition.dones.view(-1, 1))
@@ -148,12 +156,16 @@ class RolloutStorage:
         batch_size = self.num_envs * self.num_transitions_per_env
         mini_batch_size = batch_size // num_mini_batches
         indices = torch.randperm(num_mini_batches*mini_batch_size, requires_grad=False, device=self.device)
-
+        
         observations = self.observations.flatten(0, 1)
+
         if self.privileged_observations is not None:
             critic_observations = self.privileged_observations.flatten(0, 1)
-        else:
-            critic_observations = observations
+        else: critic_observations = observations
+
+        if self.camera_observations is not None:
+            camera_observations = self.camera_observations.flatten(0, 1)
+        else: camera_observations = observations
 
         actions = self.actions.flatten(0, 1)
         values = self.values.flatten(0, 1)
@@ -172,6 +184,7 @@ class RolloutStorage:
 
                 obs_batch = observations[batch_idx]
                 critic_observations_batch = critic_observations[batch_idx]
+                camera_obs_batch = camera_observations[batch_idx]
                 actions_batch = actions[batch_idx]
                 target_values_batch = values[batch_idx]
                 returns_batch = returns[batch_idx]
@@ -179,7 +192,8 @@ class RolloutStorage:
                 advantages_batch = advantages[batch_idx]
                 old_mu_batch = old_mu[batch_idx]
                 old_sigma_batch = old_sigma[batch_idx]
-                yield obs_batch, critic_observations_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, \
+
+                yield obs_batch, critic_observations_batch, camera_obs_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, \
                        old_actions_log_prob_batch, old_mu_batch, old_sigma_batch, (None, None), None
 
     # for RNNs only

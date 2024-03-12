@@ -59,10 +59,10 @@ class AnymalNav(LeggedRobot):
 
         # allocate buffers
         if self.cfg.camera.active:
-            if self.cfg.camera.imgae_type == gymapi.IMAGE_DEPTH: 
-                self.camera_obs_buf = torch.zeros(self.num_envs, self.cfg.camera.img_height, self.cfg.camera.img_width, device=self.device, dtype=torch.float)
-            elif self.cfg.camera.imgae_type == gymapi.IMAGE_COLOR:
-                self.camera_obs_buf = torch.zeros(self.num_envs, self.cfg.camera.img_height, self.cfg.camera.img_width, 4, device=self.device, dtype=torch.float)
+            if self.cfg.camera.image_type == gymapi.IMAGE_DEPTH: 
+                self.camera_obs_buf = torch.zeros(self.num_envs, 1, self.cfg.camera.img_height, self.cfg.camera.img_width, device=self.device, dtype=torch.float)
+            elif self.cfg.camera.image_type == gymapi.IMAGE_COLOR:
+                self.camera_obs_buf = torch.zeros(self.num_envs, 4, self.cfg.camera.img_height, self.cfg.camera.img_width, device=self.device, dtype=torch.float)
 
         # addition attributes
         self.commands_viz = False                           # for visualizing command (plane of base height / direction and ampitude of velocity / axis of desired base orientation)
@@ -118,7 +118,7 @@ class AnymalNav(LeggedRobot):
             self.gym.start_access_image_tensors(self.sim)
             
             for i, c in enumerate(self.camera_handles):
-                _camera_tensor = self.gym.get_camera_image_gpu_tensor(self.sim, self.envs[i], c, self.cfg.camera.imgae_type)
+                _camera_tensor = self.gym.get_camera_image_gpu_tensor(self.sim, self.envs[i], c, self.cfg.camera.image_type)
                 camera_tensor = gymtorch.wrap_tensor(_camera_tensor)
                 self.camera_tensor_list.append(camera_tensor)
                 
@@ -253,6 +253,16 @@ class AnymalNav(LeggedRobot):
             self.termination_contact_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.actor_handles[0], termination_contact_names[i])
     
     #------------- Step --------------
+    def reset(self):
+        """ Reset all robots"""
+        self.reset_idx(torch.arange(self.num_envs, device=self.device))
+        if self.cfg.camera.return_camera_obs:
+            obs, privileged_obs, camera_obs, _, _, _ = self.step(torch.zeros(self.num_envs, self.num_actions, device=self.device, requires_grad=False))
+            return obs, privileged_obs, camera_obs
+        else: 
+            obs, privileged_obs, _, _, _ = self.step(torch.zeros(self.num_envs, self.num_actions, device=self.device, requires_grad=False))
+            return obs, privileged_obs
+
     def step(self, actions):
         """ Apply actions, simulate, call self.post_physics_step()
 
@@ -277,7 +287,11 @@ class AnymalNav(LeggedRobot):
         self.obs_buf = torch.clip(self.obs_buf, -clip_obs, clip_obs)
         if self.privileged_obs_buf is not None:
             self.privileged_obs_buf = torch.clip(self.privileged_obs_buf, -clip_obs, clip_obs)
-        return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras
+        
+        if self.cfg.camera.return_camera_obs:
+            return self.obs_buf, self.privileged_obs_buf, self.camera_obs_buf, self.rew_buf, self.reset_buf, self.extras
+        else:
+            return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras
     
     def post_physics_step(self):
         """ check terminations, compute observations and rewards
@@ -368,6 +382,9 @@ class AnymalNav(LeggedRobot):
         if self.cfg.camera.active:
             self.image_preprocessing()
             self.camera_obs_buf = self.camera_images
+
+    def get_camera_observation(self):
+        return self.camera_obs_buf
     
     def _compute_torques(self, actions):
         # Choose between pd controller and actuator network
@@ -476,18 +493,20 @@ class AnymalNav(LeggedRobot):
 
     #------------- image preprocess ----------------
     def image_preprocessing(self):
-        if self.cfg.camera.imgae_type == gymapi.IMAGE_DEPTH: 
+        if self.cfg.camera.image_type == gymapi.IMAGE_DEPTH: 
             # depth image is the negative distance from camera to pixel in view direction in world coordinate units (meters)
-            print("0. Min: {} / Max: {}".format(torch.min(self.camera_images), torch.max(self.camera_images)))
+            # print("0. Min: {} / Max: {}".format(torch.min(self.camera_images), torch.max(self.camera_images)))
             # 1. -inf implies no depth value, set it to zero. output will be black.
             self.camera_images[self.camera_images == -np.inf] = 0
-            print("1. Min: {} / Max: {}".format(torch.min(self.camera_images), torch.max(self.camera_images)))
+            # print("1. Min: {} / Max: {}".format(torch.min(self.camera_images), torch.max(self.camera_images)))
             # # 2. clamp depth image to xx(cfg.camera.clamp_distance) meters to make output image human friendly
             self.camera_images[self.camera_images < -self.cfg.camera.clamp_distance] = -self.cfg.camera.clamp_distance
-            print("2. Min: {} / Max: {}".format(torch.min(self.camera_images), torch.max(self.camera_images)))
+            # print("2. Min: {} / Max: {}".format(torch.min(self.camera_images), torch.max(self.camera_images)))
             # 3. flip the direction so near-objects are light and far objects are dark
             self.camera_images = -255.0*(self.camera_images/torch.min(self.camera_images + 1e-4))
-            print("3. Min: {} / Max: {}".format(torch.min(self.camera_images), torch.max(self.camera_images)))
+            # print("3. Min: {} / Max: {}".format(torch.min(self.camera_images), torch.max(self.camera_images)))
+            # 4. add dimension x (batch_size, x(=1), img_height, img_width)
+            self.camera_images = self.camera_images.unsqueeze(1)
             
     #------------- Visualization ----------------    
     def _draw_debug_vis(self):
@@ -563,15 +582,15 @@ class AnymalNav(LeggedRobot):
     # function to show image from camera in specific environment id
     def _camera_image_vis(self, env_id):
         # locate camera position and orietation (if enable this axes will appear in image as well !!!)
-        cam_position = self.gym.get_camera_transform(self.sim, self.envs[env_id], self.actor_handles[env_id])
-        axes_geom = gymutil.AxesGeometry(scale=0.5, pose=None)
-        axes_pose = gymapi.Transform(cam_position.p, cam_position.r)
-        gymutil.draw_lines(axes_geom, self.gym, self.viewer, self.envs[env_id], axes_pose)
+        # cam_position = self.gym.get_camera_transform(self.sim, self.envs[env_id], self.actor_handles[env_id])
+        # axes_geom = gymutil.AxesGeometry(scale=0.5, pose=None)
+        # axes_pose = gymapi.Transform(cam_position.p, cam_position.r)
+        # gymutil.draw_lines(axes_geom, self.gym, self.viewer, self.envs[env_id], axes_pose)
 
         # show image
-        if self.cfg.camera.imgae_type == gymapi.IMAGE_DEPTH:
-            frame = self.camera_images[env_id].cpu().numpy().astype(np.uint8)
-        elif self.cfg.camera.imgae_type == gymapi.IMAGE_COLOR:
+        if self.cfg.camera.image_type == gymapi.IMAGE_DEPTH:
+            frame = self.camera_images[env_id].flatten(0, 1).cpu().numpy().astype(np.uint8)
+        elif self.cfg.camera.image_type == gymapi.IMAGE_COLOR:
             frame = self.camera_images[env_id, :, :, :3].cpu().numpy()
         cv2.imshow('Frame', frame) 
         cv2.waitKey(1) 

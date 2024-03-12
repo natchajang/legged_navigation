@@ -120,14 +120,15 @@ class AnymalCNavCfg( LeggedRobotCfg ):
         
     class camera:
         # spec refer to anymal c data sheet: 0.3—3 m range, 87.3 × 58.1 × 95.3º depth FOV (Horizontal / Vertical / Diagonal) 
-        active = True                            # use camera input for being observation
-        attach_rigid_name = "base"     # name of rigid body which reference for attaching camera
-        imgae_type =  gymapi.IMAGE_DEPTH                # type of image: gymapi.IMAGE_DEPTH or gymapi.IMAGE_COLOR
+        active = True                           # !!! Attach camera sensor at agent
+        return_camera_obs = True                # !!! Return camera observation in step function (if use policy CNN:  ActorCriticCNN need to be True)
+        attach_rigid_name = "base"              # name of rigid body which reference for attaching camera
+        image_type =  gymapi.IMAGE_DEPTH                # type of image: gymapi.IMAGE_DEPTH or gymapi.IMAGE_COLOR
         offset_position = gymapi.Vec3(0.4145 + 0.04715 + 0.03, 0, -0.0292)  # offset position relative to attaching rigid body frame
                                                                             # x offset from real camera frame for 0.03 m
         offset_rotation = gymapi.Quat.from_euler_zyx(0, 0.523598775598, 0)  # offset rotation relative to attaching rigid body frame
-        img_width = 256
-        img_height = 170
+        img_width = 128
+        img_height = 85
         horizontal_fov = 87.3
         near_plane = 0.3
         far_plane = 3
@@ -163,8 +164,8 @@ class AnymalCNavCfg( LeggedRobotCfg ):
         step_vel = 0.1
         step_height = 0.025
         step_angle = 0.02*math.pi
-        max_vel = 1.3
-        min_height = 0.2
+        max_vel = 0.75
+        min_height = 0.3
         max_angle = 0.2*math.pi
         
         num_commands = 6 # default: 1.lin_vel_x, 2.lin_vel_y,
@@ -235,8 +236,8 @@ class AnymalCNavCfgPPO( LeggedRobotCfgPPO ):
         activation = 'elu' # can be elu, relu, selu, crelu, lrelu, tanh, sigmoid
 
         # for only CNN network
-        actor_con2D_parameters = [[10, (5,5), (5,5)], [40, (2,2), (2,2)]]
-        critic_con2D_parameters = [[10, (5,5), (5,5)], [10, (2,2), (2,2)]]
+        actor_con2D_parameters = [[8, (5,5), (2,2)], [32, (5, 5), (2,2)]] # [[channels_out_1, kernel_size_1/ stride_1], ... [...]]
+        critic_con2D_parameters = [[8, (5,5), (2,2)], [32, (5, 5), (2,2)]]
     
     class algorithm ( LeggedRobotCfgPPO.algorithm ):
         # training params
@@ -254,14 +255,14 @@ class AnymalCNavCfgPPO( LeggedRobotCfgPPO ):
         max_grad_norm = 1.
         
     class runner( LeggedRobotCfgPPO.runner ):
-        policy_class_name = 'ActorCritic'
+        policy_class_name = 'ActorCriticCNN' #'ActorCritic'
         algorithm_class_name = 'PPO'
         num_steps_per_env = 24 # per iteration
         max_iterations = 800 # number of policy updates
         
         # logging
         save_interval = 50 # check for potential saves every this many iterations
-        run_name = 'test'               # sub experiment of each domain => save as name of folder
+        run_name = 'testMLP'               # sub experiment of each domain => save as name of folder
         experiment_name = 'anymal_c_nav' # domain of experiment
         
         # load and resume

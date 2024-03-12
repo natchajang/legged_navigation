@@ -35,7 +35,7 @@ from isaacgym import gymapi
 import torch
 import torch.nn as nn
 from torch.distributions import Normal
-from .actor_critic import ActorCritic, get_activation
+from .actor_critic import get_activation
 
 class ActorCriticCNN(nn.Module):
     is_recurrent = False
@@ -52,21 +52,21 @@ class ActorCriticCNN(nn.Module):
 
         if kwargs and kwargs['camera_cfg'].active == True:
             print("ActorCritic CNN Structure: " + str([key for key in kwargs.keys()]))
-            self.actor = CNNNet(img_type = kwargs['camera_cfg'].imgae_type,
+            self.actor = CNNNet(img_type = kwargs['camera_cfg'].image_type,
                                 img_height = kwargs['camera_cfg'].img_height,
                                 img_width = kwargs['camera_cfg'].img_width,
                                 num_state_obs = num_actor_obs,
                                 num_actions = num_actions,
-                                con2D_parameters = kwargs['policy_cfg'].actor_con2D_parameters,
+                                con2D_parameters = kwargs['policy_cfg']["actor_con2D_parameters"],
                                 combine_hidden_dims = actor_hidden_dims,
                                 activation = activation)
             
-            self.critic = CNNNet(img_type = kwargs['camera_cfg'].imgae_type,
+            self.critic = CNNNet(img_type = kwargs['camera_cfg'].image_type,
                                 img_height = kwargs['camera_cfg'].img_height,
                                 img_width = kwargs['camera_cfg'].img_width,
                                 num_state_obs = num_critic_obs,
-                                num_actions = num_actions,
-                                con2D_parameters = kwargs['policy_cfg'].critic_con2D_parameters,
+                                num_actions = 1,
+                                con2D_parameters = kwargs['policy_cfg']["critic_con2D_parameters"],
                                 combine_hidden_dims = critic_hidden_dims,
                                 activation = activation)
 
@@ -127,7 +127,7 @@ class ActorCriticCNN(nn.Module):
         return actions_mean
 
     def evaluate(self, critic_observations, camera_observations):
-        value = self.critic(critic_observations, camera_observations)    
+        value = self.critic(critic_observations, camera_observations) 
         return value
 
 class CNNNet(nn.Module):
@@ -161,6 +161,11 @@ class CNNNet(nn.Module):
                                        stride=stride_size,
                                        padding=(0, 0),
                                        dilation=(1,1)))
+        conv2D_layers.append(get_activation(activation))
+        conv2D_layers.append(nn.MaxPool2d(kernel_size=3, stride=2))
+        h = np.floor(((h - 3) / 2) + 1)
+        w = np.floor(((w - 3) / 2) + 1)
+        conv2D_layers.append(nn.Dropout())
 
         for l in range(1, len(con2D_parameters)):
             in_channels = con2D_parameters[l-1][0]
@@ -175,8 +180,14 @@ class CNNNet(nn.Module):
                                             dilation=(1,1)))
             h = np.floor(((h - kernel_size[0]) / stride_size[0]) + 1)
             w = np.floor(((w - kernel_size[1]) / stride_size[1]) + 1)
+            conv2D_layers.append(get_activation(activation))
+            conv2D_layers.append(nn.MaxPool2d(kernel_size=3, stride=2))
+            h = np.floor(((h - 3) / 2) + 1)
+            w = np.floor(((w - 3) / 2) + 1)
+            conv2D_layers.append(nn.Dropout())
 
         conv2D_layers.append(nn.Flatten())
+        conv2D_layers.append(get_activation(activation))
         self.conv2D = nn.Sequential(*conv2D_layers)
 
         #------------------- Layers after combine -------------------
@@ -196,8 +207,8 @@ class CNNNet(nn.Module):
 
     def forward(self, state, img):
         # Image branch
-        img = self.conv2D(img)
-
+        img = self.conv2D(img) # 576
+     
         # Combine image and state
         x = torch.cat([img, state], dim=1)
         x = self.mlp(x)

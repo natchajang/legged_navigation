@@ -37,9 +37,11 @@ from torch.utils.tensorboard import SummaryWriter
 import torch
 
 from rsl_rl.algorithms import PPO
-from rsl_rl.modules import ActorCritic, ActorCriticRecurrent
+from rsl_rl.modules import ActorCritic, ActorCriticCNN
 from rsl_rl.env import VecEnv
 
+from typing import Union
+from collections import defaultdict
 
 class OnPolicyRunner:
 
@@ -58,13 +60,26 @@ class OnPolicyRunner:
             num_critic_obs = self.env.num_privileged_obs 
         else:
             num_critic_obs = self.env.num_obs
-        actor_critic_class = eval(self.cfg["policy_class_name"]) # ActorCritic
+        self.actor_critic_class = eval(self.cfg["policy_class_name"]) # ActorCritic
 
+        actor_hidden_dims = self.policy_cfg["actor_hidden_dims"]
+        critic_hidden_dims = self.policy_cfg["critic_hidden_dims"]
 
-        actor_critic: ActorCritic = actor_critic_class( self.env.num_obs,
+        kwargs = defaultdict()
+        if self.actor_critic_class == ActorCriticCNN:
+            kwargs["camera_cfg"] = self.env.cfg.camera  # class camera in config AnymalCNavCfg
+            kwargs["policy_cfg"] = self.policy_cfg      # dict of cfg
+            if str(self.env.cfg.camera.image_type) == "ImageType.IMAGE_DEPTH":
+                camera_obs_shape = [1, self.env.cfg.camera.img_height, self.env.cfg.camera.img_width]
+            elif str(self.env.cfg.camera.image_type) == "ImageType.IMAGE_COLOR":
+                camera_obs_shape = [4, self.env.cfg.camera.img_height, self.env.cfg.camera.img_width]
+
+        actor_critic: Union[ActorCritic, ActorCriticCNN] = self.actor_critic_class( self.env.num_obs,
                                                         num_critic_obs,
                                                         self.env.num_actions,
-                                                        **self.policy_cfg).to(self.device)
+                                                        actor_hidden_dims,
+                                                        critic_hidden_dims,
+                                                        **kwargs).to(self.device)
         
         alg_class = eval(self.cfg["algorithm_class_name"]) # PPO
         self.alg: PPO = alg_class(actor_critic, device=self.device, **self.alg_cfg)
@@ -72,8 +87,11 @@ class OnPolicyRunner:
         self.save_interval = self.cfg["save_interval"]
 
         # init storage and model
-        self.alg.init_storage(self.env.num_envs, self.num_steps_per_env, [self.env.num_obs], [self.env.num_privileged_obs], [self.env.num_actions])
-
+        if self.actor_critic_class == ActorCriticCNN:
+            self.alg.init_storage(self.env.num_envs, self.num_steps_per_env, [self.env.num_obs], [self.env.num_privileged_obs], [self.env.num_actions], camera_obs_shape=camera_obs_shape)
+        else: 
+            self.alg.init_storage(self.env.num_envs, self.num_steps_per_env, [self.env.num_obs], [self.env.num_privileged_obs], [self.env.num_actions])
+        
         # Log
         self.log_dir = log_dir
         self.writer = None
@@ -81,7 +99,7 @@ class OnPolicyRunner:
         self.tot_time = 0
         self.current_learning_iteration = 0
 
-        _, _ = self.env.reset()
+        _ = self.env.reset()
     
     def learn(self, num_learning_iterations, init_at_random_ep_len=False):
         # initialize writer
@@ -89,10 +107,15 @@ class OnPolicyRunner:
             self.writer = SummaryWriter(log_dir=self.log_dir, flush_secs=10)
         if init_at_random_ep_len:
             self.env.episode_length_buf = torch.randint_like(self.env.episode_length_buf, high=int(self.env.max_episode_length))
+        
         obs = self.env.get_observations()
         privileged_obs = self.env.get_privileged_observations()
         critic_obs = privileged_obs if privileged_obs is not None else obs
         obs, critic_obs = obs.to(self.device), critic_obs.to(self.device)
+
+        if self.actor_critic_class == ActorCriticCNN:
+            camera_obs = self.env.get_camera_observation()
+
         self.alg.actor_critic.train() # switch to train mode (for dropout for example)
 
         ep_infos = []
@@ -107,10 +130,19 @@ class OnPolicyRunner:
             # Rollout
             with torch.inference_mode():
                 for i in range(self.num_steps_per_env):
-                    actions = self.alg.act(obs, critic_obs)
-                    obs, privileged_obs, rewards, dones, infos = self.env.step(actions)
-                    critic_obs = privileged_obs if privileged_obs is not None else obs
-                    obs, critic_obs, rewards, dones = obs.to(self.device), critic_obs.to(self.device), rewards.to(self.device), dones.to(self.device)
+                    # if actor and critic are CNN
+                    if self.actor_critic_class == ActorCriticCNN:
+                        actions = self.alg.act(obs, critic_obs, camera_obs)
+                        obs, privileged_obs, camera_obs, rewards, dones, infos = self.env.step(actions)
+                        critic_obs = privileged_obs if privileged_obs is not None else obs
+                        obs, critic_obs, camera_obs, rewards, dones = obs.to(self.device), critic_obs.to(self.device), camera_obs.to(self.device), rewards.to(self.device), dones.to(self.device)
+                    # other structure of actor and critic
+                    else:
+                        actions = self.alg.act(obs, critic_obs)
+                        obs, privileged_obs, rewards, dones, infos = self.env.step(actions)
+                        critic_obs = privileged_obs if privileged_obs is not None else obs
+                        obs, critic_obs, rewards, dones = obs.to(self.device), critic_obs.to(self.device), rewards.to(self.device), dones.to(self.device)
+                    
                     self.alg.process_env_step(rewards, dones, infos)
                     
                     if self.log_dir is not None:
@@ -130,7 +162,9 @@ class OnPolicyRunner:
 
                 # Learning step
                 start = stop
-                self.alg.compute_returns(critic_obs)
+                if self.actor_critic_class == ActorCriticCNN:
+                    self.alg.compute_returns(critic_obs, camera_obs)
+                else: self.alg.compute_returns(critic_obs)
             
             mean_value_loss, mean_surrogate_loss = self.alg.update()
             stop = time.time()
