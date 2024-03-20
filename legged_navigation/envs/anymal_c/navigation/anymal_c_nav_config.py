@@ -34,7 +34,7 @@ from isaacgym import gymapi
 
 class AnymalCNavCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
-        num_observations = 55 # measure height=187 then 52 + 187 = 239
+        num_observations = 51 # measure height=187 then 52 + 187 = 239
         num_envs = 4096       # number of environment default = 4096
         num_actions = 12      # number of action equal to Dof (control with actuator network)
         send_timeouts = True  # send time out information to the algorithm
@@ -120,15 +120,15 @@ class AnymalCNavCfg( LeggedRobotCfg ):
         
     class camera:
         # spec refer to anymal c data sheet: 0.3—3 m range, 87.3 × 58.1 × 95.3º depth FOV (Horizontal / Vertical / Diagonal) 
-        active = True                           # !!! Attach camera sensor at agent
-        return_camera_obs = True                # !!! Return camera observation in step function (if use policy CNN:  ActorCriticCNN need to be True)
+        active = False                           # !!! Attach camera sensor at agent
+        return_camera_obs = False                # !!! Return camera observation in step function (if use policy CNN:  ActorCriticCNN need to be True)
         attach_rigid_name = "base"              # name of rigid body which reference for attaching camera
         image_type =  gymapi.IMAGE_DEPTH                # type of image: gymapi.IMAGE_DEPTH or gymapi.IMAGE_COLOR
         offset_position = gymapi.Vec3(0.4145 + 0.04715 + 0.03, 0, -0.0292)  # offset position relative to attaching rigid body frame
                                                                             # x offset from real camera frame for 0.03 m
         offset_rotation = gymapi.Quat.from_euler_zyx(0, 0.523598775598, 0)  # offset rotation relative to attaching rigid body frame
-        img_width = 128
-        img_height = 85
+        img_width = 64 # 128
+        img_height = 64 # 85
         horizontal_fov = 87.3
         near_plane = 0.3
         far_plane = 3
@@ -159,43 +159,58 @@ class AnymalCNavCfg( LeggedRobotCfg ):
     class commands( LeggedRobotCfg.commands ):
         curriculum = False # If true the tracking reward is above 80% of the maximum, increase the range of commands
         max_curriculum = 1.
+
+        num_commands = 2 # mode 'tracking' is 6:    1.lin_vel_x, 2.lin_vel_y,
+                         #                          3.base_height
+                         #                          4.base_roll 5.base_pitch 6.base_yaw
+                         # mode 'navigation' is 2:  1.goal_x, 2.goal_y,
+    
+        # # limit update command range (use if curriculum is True)
+        # step_vel = 0.1
+        # step_height = 0.025
+        # step_angle = 0.02*math.pi
+        # max_vel = 0.75
+        # min_height = 0.3
+        # max_angle = 0.2*math.pi
         
-        # limit update command range (use if curriculum is True)
-        step_vel = 0.1
-        step_height = 0.025
-        step_angle = 0.02*math.pi
-        max_vel = 0.75
-        min_height = 0.3
-        max_angle = 0.2*math.pi
+        # resampling_time = 10.   # time before command are changed [sec] 
+        #                         # if do not want to resample during episode set more than env.episode_length_s
+        # heading_command = False # if true: compute ang vel command from heading error (not use in our task)
+
+        # for mode 'navigation'
+        step_radius = 0.5       # [m]
+        accept_error = 0.2      # [m]
         
-        num_commands = 6 # default: 1.lin_vel_x, 2.lin_vel_y,
-                         #          3.base_height
-                         #          4.base_roll 5.base_pitch 6.base_yaw
-        resampling_time = 10.   # time before command are changed [sec] 
-                                # if do not want to resample during episode set more than env.episode_length_s
-        heading_command = False # if true: compute ang vel command from heading error (not use in our task)
-        
-        class ranges:           # range of command
-            start_vel = 0.5
-            start_height = 0.4
-            start_angle = 0.1
-            lin_vel_x = [-start_vel, start_vel] # min max [m/s]
-            lin_vel_y = [-start_vel, start_vel]   # min max [m/s]
-            base_height = [start_height, 0.6] # min max [m]
-            base_roll = [-start_angle*math.pi, start_angle*math.pi]   # min max [rad]
-            base_pitch = [-start_angle*math.pi, start_angle*math.pi]  # min max [rad]
-            base_yaw = [-start_angle*math.pi, start_angle*math.pi]    # min max [rad]
-        
+        class ranges: # range of command
+            # for mode 'tracking'
+            # start_vel = 0.5
+            # start_height = 0.4
+            # start_angle = 0.1
+            # lin_vel_x = [-start_vel, start_vel] # min max [m/s]
+            # lin_vel_y = [-start_vel, start_vel]   # min max [m/s]
+            # base_height = [start_height, 0.6] # min max [m]
+            # base_roll = [-start_angle*math.pi, start_angle*math.pi]   # min max [rad]
+            # base_pitch = [-start_angle*math.pi, start_angle*math.pi]  # min max [rad]
+            # base_yaw = [-start_angle*math.pi, start_angle*math.pi]    # min max [rad]
+
+            # for mode 'navigation'
+            min_radius = 1
+            max_radius = 3
+            radius = [min_radius, max_radius] # min max [m]
+            angle = [0, 2*math.pi]
+            
     class rewards( LeggedRobotCfg.rewards ):
         only_positive_rewards = False # if true negative total rewards are clipped at zero (avoids early termination problems)
-        # Set reward tracking function types
-        reward_tracking = 'progress_estimator' # str ['binary', 'progress_estimator', 'gaussian']
-        reward_tracking_accept = {'velocity': 0.2, 'height':0.04, 'orientation':0.04*math.pi}
-        # Need to tune
-        tracking_sigma = 0.1 # tracking reward = exp(-error^2/sigma) for linear velocity
-        tracking_height = 0.01 # tracking reward = exp(-error^2/sigma) for height
-        tracking_orientation = 0.01 # tracking reward = exp(-error^2/sigma) for base orientation
         
+        # Set reward tracking function types
+        # reward_tracking = 'progress_estimator' # str ['binary', 'progress_estimator', 'gaussian']
+        # reward_tracking_accept = {'velocity': 0.2, 'height':0.04, 'orientation':0.04*math.pi}
+        # Need to tune
+        # tracking_sigma = 0.1 # tracking reward = exp(-error^2/sigma) for linear velocity
+        # tracking_height = 0.01 # tracking reward = exp(-error^2/sigma) for height
+        # tracking_orientation = 0.01 # tracking reward = exp(-error^2/sigma) for base orientation
+        timestep_rate = 0.003 
+
         soft_dof_pos_limit = 1. # percentage of urdf limits, values above this limit are penalized
         soft_dof_vel_limit = 1.
         soft_torque_limit = 1.
@@ -212,9 +227,9 @@ class AnymalCNavCfg( LeggedRobotCfg ):
             collision = -0.001
             
             # add my own reward functions
-            tracking_lin_vel = 1.0
-            tracking_height = 1.0
-            tracking_orientation = 1.0
+            # navigation_progress = 1.0
+            # navigation_goal_reach = 1.0
+            # navigation_timestep = -1.0
             
             # unenble some reward functions
             dof_acc = -0.0
@@ -236,8 +251,8 @@ class AnymalCNavCfgPPO( LeggedRobotCfgPPO ):
         activation = 'elu' # can be elu, relu, selu, crelu, lrelu, tanh, sigmoid
 
         # for only CNN network
-        actor_con2D_parameters = [[8, (5,5), (2,2)], [32, (5, 5), (2,2)]] # [[channels_out_1, kernel_size_1/ stride_1], ... [...]]
-        critic_con2D_parameters = [[8, (5,5), (2,2)], [32, (5, 5), (2,2)]]
+        actor_con2D_parameters = [[8, (5,5), (2,2)]] # [[channels_out_1, kernel_size_1/ stride_1], ... [...]]
+        critic_con2D_parameters = [[8, (5,5), (2,2)]] # [32, (5, 5), (2,2)]
     
     class algorithm ( LeggedRobotCfgPPO.algorithm ):
         # training params
@@ -255,7 +270,7 @@ class AnymalCNavCfgPPO( LeggedRobotCfgPPO ):
         max_grad_norm = 1.
         
     class runner( LeggedRobotCfgPPO.runner ):
-        policy_class_name = 'ActorCriticCNN' #'ActorCritic'
+        policy_class_name = 'ActorCritic' #'ActorCritic'
         algorithm_class_name = 'PPO'
         num_steps_per_env = 24 # per iteration
         max_iterations = 800 # number of policy updates

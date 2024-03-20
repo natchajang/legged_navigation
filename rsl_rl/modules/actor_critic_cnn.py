@@ -161,11 +161,11 @@ class CNNNet(nn.Module):
                                        stride=stride_size,
                                        padding=(0, 0),
                                        dilation=(1,1)))
-        conv2D_layers.append(get_activation(activation))
+        conv2D_layers.append(get_activation("relu"))
         conv2D_layers.append(nn.MaxPool2d(kernel_size=3, stride=2))
         h = np.floor(((h - 3) / 2) + 1)
         w = np.floor(((w - 3) / 2) + 1)
-        conv2D_layers.append(nn.Dropout())
+        # conv2D_layers.append(nn.Dropout())
 
         for l in range(1, len(con2D_parameters)):
             in_channels = con2D_parameters[l-1][0]
@@ -180,11 +180,11 @@ class CNNNet(nn.Module):
                                             dilation=(1,1)))
             h = np.floor(((h - kernel_size[0]) / stride_size[0]) + 1)
             w = np.floor(((w - kernel_size[1]) / stride_size[1]) + 1)
-            conv2D_layers.append(get_activation(activation))
+            conv2D_layers.append(get_activation("relu"))
             conv2D_layers.append(nn.MaxPool2d(kernel_size=3, stride=2))
             h = np.floor(((h - 3) / 2) + 1)
             w = np.floor(((w - 3) / 2) + 1)
-            conv2D_layers.append(nn.Dropout())
+            # conv2D_layers.append(nn.Dropout())
 
         conv2D_layers.append(nn.Flatten())
         conv2D_layers.append(get_activation(activation))
@@ -207,7 +207,7 @@ class CNNNet(nn.Module):
 
     def forward(self, state, img):
         # Image branch
-        img = self.conv2D(img) # 576
+        img = self.conv2D(img) 
      
         # Combine image and state
         x = torch.cat([img, state], dim=1)

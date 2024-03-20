@@ -49,11 +49,14 @@ def train(args):
     env, env_cfg = task_registry.make_env(name=args.task, args=args)
     ppo_runner, train_cfg = task_registry.make_alg_runner(env=env, name=args.task, args=args)
     
+    if args.command_viz and isinstance(env, AnymalNav):
+        env.commands_viz = True
+        
     # print env and policy info form configuration
     print("task: {} run name: {}------------------------".format(args.task, train_cfg.runner.run_name))
     print("num_envs : {} mesh_type : {}".format(env.num_envs, env.cfg.terrain.mesh_type))
     print("State space\n num_observations: {}\n measure height: {}\n".format(env_cfg.env.num_observations, env_cfg.terrain.measure_heights))
-    if isinstance(env_cfg, AnymalCNavCfg): print("Reward\n function type:{}\n".format(env_cfg.rewards.reward_tracking))
+    # if isinstance(env_cfg, AnymalCNavCfg): print("Reward\n function type:{}\n".format(env_cfg.rewards.reward_tracking))
     if isinstance(env_cfg, AnymalCNavCfg): print("Camera Sensor\n Active: {}\n Image Type: {}\n".format(env_cfg.camera.active, env_cfg.camera.image_type))
     print("Terrain\n mesh type: {}\n ".format(env_cfg.terrain.mesh_type))
     print("Techniuqe\n terrain cur: {}\n command cur: {}\n positive rew: {}\n".format(env_cfg.terrain.curriculum,
