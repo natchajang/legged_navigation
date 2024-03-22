@@ -66,8 +66,8 @@ class AnymalNav(LeggedRobot):
 
         # addition attributes
         self.commands_viz = False                           # for visualizing command (plane of base height / direction and ampitude of velocity / axis of desired base orientation)
-        self.command_set_flag = False                       # flag for setting command without resample
         self.camera_image_viz = False                        # flag for visualizing image from camera sensor
+        self.command_set_flag = False                       # flag for setting command without resample
 
         # for log save
         self.logger = Logger(self.dt)                       # logger for saving training history
@@ -94,7 +94,7 @@ class AnymalNav(LeggedRobot):
         self.base_mean_height = torch.mean(self.root_states[:, 2].unsqueeze(1) - self.measured_heights, dim=1)
         
         # min distance reach
-        self.min_distance = torch.inf * torch.ones(self.num_envs)
+        self.min_distance = torch.zeros(self.num_envs, device=self.device)
 
         # first command
         self.command_own = torch.zeros(self.num_envs, self.cfg.commands.num_commands, dtype=float, device=self.device, requires_grad=False)
@@ -328,6 +328,7 @@ class AnymalNav(LeggedRobot):
         # compute observations, rewards, resets, ...
         self.check_termination()
         self.compute_reward()
+        self.check_distance_progress()      # update min distance
         env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
         self.reset_idx(env_ids)
 
@@ -350,13 +351,19 @@ class AnymalNav(LeggedRobot):
             if self.camera_image_viz:
                 self._camera_image_vis(0)
 
+    def check_distance_progress(self):
+        d = euclidean_distance(self.root_states[:, :2], self.commands)
+        closer = torch.where(d < self.min_distance, 1, 0)
+        closer_ids = closer.nonzero(as_tuple=False).flatten()
+        self.min_distance[closer_ids] = d[closer_ids]
+
     def check_termination(self):
         """ Check if environments need to be reset
         """
         self.reset_buf = torch.any(torch.norm(self.contact_forces[:, self.termination_contact_indices, :], dim=-1) > 1., dim=1)
         self.time_out_buf = self.episode_length_buf > self.max_episode_length # no terminal reward for time-outs
-        self.reach_goal_buf = torch.where(euclidean_distance(self.root_states[:, :2] - self.commands) <= self.cfg.commands.accept_error)
-
+        self.reach_goal_buf = torch.where(euclidean_distance(self.root_states[:, :2], self.commands) <= self.cfg.commands.accept_error, True, False)
+        
         self.reset_buf |= self.time_out_buf
         self.reset_buf |= self.reach_goal_buf
     
@@ -365,8 +372,6 @@ class AnymalNav(LeggedRobot):
         # Additionaly empty actuator network hidden states
         self.sea_hidden_state_per_env[:, env_ids] = 0.
         self.sea_cell_state_per_env[:, env_ids] = 0.
-
-        self.min_distance[env_ids] = torch.inf  # reset min distance of terminated env
     
     def compute_observations(self):
         """ Computes observations
@@ -445,8 +450,8 @@ class AnymalNav(LeggedRobot):
         # set new goal point
         self.commands[env_ids, 0] = x
         self.commands[env_ids, 1] = y
-        
-        self.commands_set()
+
+        self.min_distance[env_ids] = r # store initial distance of terminated env
     
     def update_command_curriculum(self, env_ids):
         """ Implements a curriculum of increasing commands range for random
@@ -615,15 +620,15 @@ class AnymalNav(LeggedRobot):
     
     def _reward_navigation_progress(self):
         # calculate navigation progress 
-        # update new min distance
-        return 
-
+        agent_goal_dis = euclidean_distance(self.root_states[:, :2], self.commands)
+        p = torch.clip(self.min_distance - agent_goal_dis, 0, torch.inf)
+        return 1 -  torch.exp(-( p**2 ) / (self.cfg.rewards.navigation_progress_sigma))
+    
     def _reward_navigation_goal_reach(self):
-        return torch.where(euclidean_distance(self.root_states[:, :2] - self.commands) <= self.cfg.commands.accept_error)
+        return torch.where(euclidean_distance(self.root_states[:, :2], self.commands) <= self.cfg.commands.accept_error, 1, 0)
 
     def _reward_navigation_timestep(self):
-        return torch.ones(self.num_envs) * self.cfg.rewards.timestep_rate
-    
+        return torch.ones(self.num_envs, device=self.device) * self.cfg.rewards.timestep_rate
 
 # Additional Function 
 def euclidean_distance(p1:torch.tensor, p2:torch.tensor):

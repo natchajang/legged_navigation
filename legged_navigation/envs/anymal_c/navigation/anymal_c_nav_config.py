@@ -127,8 +127,8 @@ class AnymalCNavCfg( LeggedRobotCfg ):
         offset_position = gymapi.Vec3(0.4145 + 0.04715 + 0.03, 0, -0.0292)  # offset position relative to attaching rigid body frame
                                                                             # x offset from real camera frame for 0.03 m
         offset_rotation = gymapi.Quat.from_euler_zyx(0, 0.523598775598, 0)  # offset rotation relative to attaching rigid body frame
-        img_width = 64 # 128
-        img_height = 64 # 85
+        img_width = 256 # 128
+        img_height = 170 # 85
         horizontal_fov = 87.3
         near_plane = 0.3
         far_plane = 3
@@ -164,7 +164,7 @@ class AnymalCNavCfg( LeggedRobotCfg ):
                          #                          3.base_height
                          #                          4.base_roll 5.base_pitch 6.base_yaw
                          # mode 'navigation' is 2:  1.goal_x, 2.goal_y,
-    
+     
         # # limit update command range (use if curriculum is True)
         # step_vel = 0.1
         # step_height = 0.025
@@ -209,7 +209,8 @@ class AnymalCNavCfg( LeggedRobotCfg ):
         # tracking_sigma = 0.1 # tracking reward = exp(-error^2/sigma) for linear velocity
         # tracking_height = 0.01 # tracking reward = exp(-error^2/sigma) for height
         # tracking_orientation = 0.01 # tracking reward = exp(-error^2/sigma) for base orientation
-        timestep_rate = 0.003 
+        timestep_rate = 0.005 
+        navigation_progress_sigma = 0.1
 
         soft_dof_pos_limit = 1. # percentage of urdf limits, values above this limit are penalized
         soft_dof_vel_limit = 1.
@@ -240,6 +241,9 @@ class AnymalCNavCfg( LeggedRobotCfg ):
             feet_stumble = -0.0
             dof_vel = -0.
             orientation = -0.
+            tracking_lin_vel = 0.
+            tracking_height = 0.
+            tracking_orientation = 0.
             
 class AnymalCNavCfgPPO( LeggedRobotCfgPPO ):
     seed = 1

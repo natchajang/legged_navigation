@@ -193,6 +193,7 @@ def get_args():
         # add my custom parameter
         {"name": "--debug_viz", "action": "store_true", "default": False, "help": "Enable to visualize height sample"},
         {"name": "--command_viz", "action": "store_true", "default": False, "help": "Enable to visualize command compare with mesurement"},
+        {"name": "--camera_viz", "action": "store_true", "default": False, "help": "Enable to visualize example of image from camera sensor"},
         {"name": "--load_path", "type": str, "help": "folder of replay policy"},
         {"name": "--command_set", "type": str, "default": None,"help": "set desired command => [command set1, command set2, ...];  \
                                                                         command set(list): [lin_vel_x(cm/s), lin_vel_y(cm/s), height(cm), roll(deg),\

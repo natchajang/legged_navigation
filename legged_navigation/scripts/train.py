@@ -51,6 +51,9 @@ def train(args):
     
     if args.command_viz and isinstance(env, AnymalNav):
         env.commands_viz = True
+    
+    if args.camera_viz and isinstance(env, AnymalNav):
+        env.camera_image_viz = True
         
     # print env and policy info form configuration
     print("task: {} run name: {}------------------------".format(args.task, train_cfg.runner.run_name))
