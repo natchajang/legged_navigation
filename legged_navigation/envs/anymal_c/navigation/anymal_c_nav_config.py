@@ -34,7 +34,7 @@ from isaacgym import gymapi
 
 class AnymalCNavCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
-        num_observations = 51 # measure height=187 then 52 + 187 = 239
+        num_observations = 52 # measure height=187 then 52 + 187 = 239
         num_envs = 4096       # number of environment default = 4096
         num_actions = 12      # number of action equal to Dof (control with actuator network)
         send_timeouts = True  # send time out information to the algorithm
@@ -194,8 +194,8 @@ class AnymalCNavCfg( LeggedRobotCfg ):
             # base_yaw = [-start_angle*math.pi, start_angle*math.pi]    # min max [rad]
 
             # for mode 'navigation'
-            min_radius = 1
-            max_radius = 3
+            min_radius = 0.5
+            max_radius = 1.5
             radius = [min_radius, max_radius] # min max [m]
             angle = [0, 2*math.pi]
             
@@ -210,7 +210,7 @@ class AnymalCNavCfg( LeggedRobotCfg ):
         # tracking_height = 0.01 # tracking reward = exp(-error^2/sigma) for height
         # tracking_orientation = 0.01 # tracking reward = exp(-error^2/sigma) for base orientation
         timestep_rate = 0.005 
-        navigation_progress_sigma = 0.1
+        navigation_progress_sigma = 0.0001
 
         soft_dof_pos_limit = 1. # percentage of urdf limits, values above this limit are penalized
         soft_dof_vel_limit = 1.
@@ -228,11 +228,12 @@ class AnymalCNavCfg( LeggedRobotCfg ):
             collision = -0.001
             
             # add my own reward functions
-            # navigation_progress = 1.0
-            # navigation_goal_reach = 1.0
+            navigation_progress = 1.0
+            navigation_goal_reach = 1.0
             # navigation_timestep = -1.0
             
             # unenble some reward functions
+            # lin_vel_z = -0.0
             dof_acc = -0.0
             termination = -0.0
             tracking_ang_vel = 0.

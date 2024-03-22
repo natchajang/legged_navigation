@@ -363,7 +363,7 @@ class AnymalNav(LeggedRobot):
         self.reset_buf = torch.any(torch.norm(self.contact_forces[:, self.termination_contact_indices, :], dim=-1) > 1., dim=1)
         self.time_out_buf = self.episode_length_buf > self.max_episode_length # no terminal reward for time-outs
         self.reach_goal_buf = torch.where(euclidean_distance(self.root_states[:, :2], self.commands) <= self.cfg.commands.accept_error, True, False)
-        
+
         self.reset_buf |= self.time_out_buf
         self.reset_buf |= self.reach_goal_buf
     
@@ -376,7 +376,7 @@ class AnymalNav(LeggedRobot):
     def compute_observations(self):
         """ Computes observations
         """
-        self.obs_buf = torch.cat((  (self.base_mean_height * self.obs_scales.height_measurements).unsqueeze(1),
+        self.obs_buf = torch.cat((  (self.root_states[:, :2] * self.obs_scales.height_measurements),
                                     self.base_euler * self.obs_scales.dof_pos,
                                     self.base_lin_vel * self.obs_scales.lin_vel,
                                     self.base_ang_vel  * self.obs_scales.ang_vel,
@@ -622,6 +622,11 @@ class AnymalNav(LeggedRobot):
         # calculate navigation progress 
         agent_goal_dis = euclidean_distance(self.root_states[:, :2], self.commands)
         p = torch.clip(self.min_distance - agent_goal_dis, 0, torch.inf)
+        # print("agent goal dis", agent_goal_dis[0])
+        # print("min dis", self.min_distance[0])
+        # print("progress", p[0])
+        # print("reward", (1 -  torch.exp(-( p**2 ) / (self.cfg.rewards.navigation_progress_sigma)))[0])
+        # print("--------------------------------")
         return 1 -  torch.exp(-( p**2 ) / (self.cfg.rewards.navigation_progress_sigma))
     
     def _reward_navigation_goal_reach(self):
