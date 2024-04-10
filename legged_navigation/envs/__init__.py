@@ -34,6 +34,8 @@ from .anymal_c.anymal import Anymal
 from .anymal_c.mixed_terrains.anymal_c_rough_config import AnymalCRoughCfg, AnymalCRoughCfgPPO
 from .anymal_c.flat.anymal_c_flat_config import AnymalCFlatCfg, AnymalCFlatCfgPPO
 
+from .anymal_c.anymal_edit import AnymalEdit
+from .anymal_c.overcome_box.anymal_c_box_config import AnymalCBoxCfg, AnymalCBoxCfgPPO
 from .anymal_c.anymal_nav import AnymalNav
 from .anymal_c.navigation.anymal_c_nav_config import AnymalCNavCfg, AnymalCNavCfgPPO
 
@@ -41,4 +43,5 @@ from legged_navigation.utils.task_registry import task_registry
 
 task_registry.register( "anymal_c_rough", Anymal, AnymalCRoughCfg(), AnymalCRoughCfgPPO() )
 task_registry.register( "anymal_c_flat", Anymal, AnymalCFlatCfg(), AnymalCFlatCfgPPO() )
+task_registry.register( "anymal_c_box", AnymalEdit, AnymalCBoxCfg(), AnymalCBoxCfgPPO() )
 task_registry.register( "anymal_c_nav", AnymalNav, AnymalCNavCfg(), AnymalCNavCfgPPO() )

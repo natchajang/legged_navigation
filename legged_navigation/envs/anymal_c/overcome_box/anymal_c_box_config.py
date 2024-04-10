@@ -31,9 +31,9 @@
 import math
 from legged_navigation.envs.base.legged_robot_config import LeggedRobotCfg, LeggedRobotCfgPPO
 
-class AnymalCNavCfg( LeggedRobotCfg ):
+class AnymalCBoxCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
-        num_observations = 52 # measure height = 187 
+        num_observations = 55 # measure height = 187 
         num_envs = 4096       # number of environment default = 4096
         num_actions = 12      # number of action equal to Dof (control with actuator network)
         send_timeouts = True  # send time out information to the algorithm
@@ -140,37 +140,48 @@ class AnymalCNavCfg( LeggedRobotCfg ):
         max_curriculum = 1.
         
         # limit update command range (use if curriculum is True)
-        step_height = 0.025 # [m] step to decrease height use when activate command curriculum
+        step_vel = 0.1
+        step_height = 0.025
+        step_angle = 0.02*math.pi
+        max_vel = 1.3
         min_height = 0.2
-        step_radius = 0.1   # [m] step to increase radius use when activate command curriculum
-        max_radius = 1
-
-        accept_error = 0.1  # [m] the radius from goal point that consider the agent reach the goal
-   
-        num_commands = 3 # x, y, z of goal position
+        max_angle = 0.2*math.pi
+        
+        num_commands = 6 # default: 1.lin_vel_x, 2.lin_vel_y,
+                         #          3.base_height
+                         #          4.base_roll 5.base_pitch 6.base_yaw
         resampling_time = 10.   # time before command are changed [sec] 
                                 # if do not want to resample during episode set more than env.episode_length_s
         heading_command = False # if true: compute ang vel command from heading error (not use in our task)
         
         class ranges:           # range of command
+            # lin_vel_x = [-1.3, 1.3] # min max [m/s]
+            # lin_vel_y = [-1.3, 1.3]   # min max [m/s]
+            # base_height = [0.25, 0.50] # min max [m]
+            # base_roll = [-0.2*math.pi, 0.2*math.pi]   # min max [rad]
+            # base_pitch = [-0.2*math.pi, 0.2*math.pi]  # min max [rad]
+            # base_yaw = [-0.2*math.pi, 0.2*math.pi]    # min max [rad]
+            
+            start_vel = 0.5
             start_height = 0.35
-            min_radius = 0.2
-            start_max_radius = 0.4
-
+            start_angle = 0.1
+            lin_vel_x = [-start_vel, start_vel] # min max [m/s]
+            lin_vel_y = [-start_vel, start_vel]   # min max [m/s]
             base_height = [start_height, 0.6] # min max [m]
-            radius = [min_radius, start_max_radius] # min max [m]
-            angle = [0, 2*math.pi]
-           
+            base_roll = [-start_angle*math.pi, start_angle*math.pi]   # min max [rad]
+            base_pitch = [-start_angle*math.pi, start_angle*math.pi]  # min max [rad]
+            base_yaw = [-start_angle*math.pi, start_angle*math.pi]    # min max [rad]
         
     class rewards( LeggedRobotCfg.rewards ):
         only_positive_rewards = False # if true negative total rewards are clipped at zero (avoids early termination problems)
-        
-        # sigma parameter
+        # Set reward tracking function types
+        reward_tracking = 'gaussian' # str ['binary', 'progress_estimator', 'gaussian']
+        reward_tracking_accept = {'velocity': 0.2, 'height':0.04, 'orientation':0.04*math.pi}
+        # Need to tune
+        tracking_sigma = 0.1 # tracking reward = exp(-error^2/sigma) for linear velocity
         tracking_height = 0.001 # tracking reward = exp(-error^2/sigma) for height
-        tracking_goal_point = 0.001 
-        tracking_velocity = 0.01
-        velocity_target = 0.5
-
+        tracking_orientation = 0.01 # tracking reward = exp(-error^2/sigma) for base orientation
+        
         soft_dof_pos_limit = 1. # percentage of urdf limits, values above this limit are penalized
         soft_dof_vel_limit = 1.
         soft_torque_limit = 1.
@@ -187,11 +198,9 @@ class AnymalCNavCfg( LeggedRobotCfg ):
             collision = -0.001
             
             # add my own reward functions
-            tracking_lin_vel = 1.0
+            tracking_lin_vel = 0.0
             tracking_height = 1.0
-            tracking_goal_point = 1.0
-            reach_goal = 1.0
-            time_step = 0.0
+            tracking_orientation = 0.0
             
             # unenble some reward functions
             dof_acc = -0.0
@@ -202,9 +211,8 @@ class AnymalCNavCfg( LeggedRobotCfg ):
             feet_stumble = -0.0
             dof_vel = -0.
             orientation = -0.
-            tracking_orientation = 0.0
             
-class AnymalCNavCfgPPO( LeggedRobotCfgPPO ):
+class AnymalCBoxCfgPPO( LeggedRobotCfgPPO ):
     seed = 1
     runner_class_name = 'OnPolicyRunner'
     class policy( LeggedRobotCfgPPO.policy ):
@@ -236,8 +244,8 @@ class AnymalCNavCfgPPO( LeggedRobotCfgPPO ):
         
         # logging
         save_interval = 50 # check for potential saves every this many iterations
-        run_name = 'test5'               # sub experiment of each domain => save as name of folder
-        experiment_name = 'anymal_c_nav' # domain of experiment
+        run_name = 'track_height2'               # sub experiment of each domain => save as name of folder
+        experiment_name = 'anymal_c_box' # domain of experiment
         
         # load and resume
         resume = False

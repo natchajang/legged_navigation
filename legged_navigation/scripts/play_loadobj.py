@@ -76,7 +76,7 @@ def play(args):
     env_cfg.domain_rand.push_robots = False
     
     env_cfg.env.episode_length_s = 20
-    env_cfg.commands.resampling_time = 20
+    env_cfg.commands.resampling_time = 3
     
     #set viewer pos and lookat
     env_cfg.viewer.pos = [16, 0, 5] #[11, 5, 2]
@@ -138,7 +138,7 @@ def play(args):
     if args.debug_viz:
         env.debug_viz = True
     # add open command visualization
-    if args.command_viz and isinstance(env, AnymalNav):
+    if args.command_viz and (isinstance(env, AnymalNav) or isinstance(env, AnymalEdit)):
         env.commands_viz = True
         
     # load policy
@@ -184,31 +184,31 @@ def play(args):
             camera_position += camera_vel * env.dt
             env.set_camera(camera_position, camera_position + camera_direction)
         
-        logger_save.log_states(
-                {
-                    'dof_pos_target': actions[robot_index, joint_index].item() * env.cfg.control.action_scale,
-                    'dof_pos': env.dof_pos[robot_index, joint_index].item(),
-                    'dof_vel': env.dof_vel[robot_index, joint_index].item(),
-                    'dof_torque': env.torques[robot_index, joint_index].item(),
-                    'command_lin_x': env.commands[robot_index, 0].item(),
-                    'command_lin_y': env.commands[robot_index, 1].item(),
-                    'command_height': env.commands[robot_index, 2].item(),
-                    'command_roll': env.commands[robot_index, 3].item(),
-                    'command_pitch': env.commands[robot_index, 4].item(),
-                    'command_yaw': env.commands[robot_index, 5].item(),
-                    'base_roll' : env.base_euler[robot_index, 0].item(),
-                    'base_pitch' : env.base_euler[robot_index, 1].item(),
-                    'base_yaw' : env.base_euler[robot_index, 2].item(),
-                    'base_pos_x' : env.base_mean_height[robot_index].item(),    
-                    'base_vel_x': env.base_lin_vel[robot_index, 0].item(),
-                    'base_vel_y': env.base_lin_vel[robot_index, 1].item(),
-                    'base_vel_z': env.base_lin_vel[robot_index, 2].item(),
-                    'base_vel_yaw': env.base_ang_vel[robot_index, 2].item(),
-                    'contact_forces_z': env.contact_forces[robot_index, env.feet_indices, 2].cpu().numpy(),
-                    'distance_x' : env.root_states[robot_index, 0].item(),
-                    'distance_y' : env.root_states[robot_index, 1].item()
-                }
-            )
+        # logger_save.log_states(
+        #         {
+        #             'dof_pos_target': actions[robot_index, joint_index].item() * env.cfg.control.action_scale,
+        #             'dof_pos': env.dof_pos[robot_index, joint_index].item(),
+        #             'dof_vel': env.dof_vel[robot_index, joint_index].item(),
+        #             'dof_torque': env.torques[robot_index, joint_index].item(),
+        #             'command_lin_x': env.commands[robot_index, 0].item(),
+        #             'command_lin_y': env.commands[robot_index, 1].item(),
+        #             'command_height': env.commands[robot_index, 2].item(),
+        #             'command_roll': env.commands[robot_index, 3].item(),
+        #             'command_pitch': env.commands[robot_index, 4].item(),
+        #             'command_yaw': env.commands[robot_index, 5].item(),
+        #             'base_roll' : env.base_euler[robot_index, 0].item(),
+        #             'base_pitch' : env.base_euler[robot_index, 1].item(),
+        #             'base_yaw' : env.base_euler[robot_index, 2].item(),
+        #             'base_pos_x' : env.base_mean_height[robot_index].item(),    
+        #             'base_vel_x': env.base_lin_vel[robot_index, 0].item(),
+        #             'base_vel_y': env.base_lin_vel[robot_index, 1].item(),
+        #             'base_vel_z': env.base_lin_vel[robot_index, 2].item(),
+        #             'base_vel_yaw': env.base_ang_vel[robot_index, 2].item(),
+        #             'contact_forces_z': env.contact_forces[robot_index, env.feet_indices, 2].cpu().numpy(),
+        #             'distance_x' : env.root_states[robot_index, 0].item(),
+        #             'distance_y' : env.root_states[robot_index, 1].item()
+        #         }
+            # )
     # desired_distance = torch.norm(env.commands[:, :2], dim=1)*20*0.5
     # print("Command: ", torch.norm(env.commands[:, :2], dim=1))
     walk_distance = torch.norm(env.root_states[:, :2]-first_state, dim=1)

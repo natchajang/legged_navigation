@@ -54,3 +54,9 @@ def torch_rand_sqrt_float(lower, upper, shape, device):
     r = torch.where(r<0., -torch.sqrt(-r), torch.sqrt(r))
     r =  (r + 1.) / 2.
     return (upper - lower) * r + lower
+
+# calculate euclidean distance between 2 points
+def euclidean_distance(p1:torch.tensor, p2:torch.tensor):
+    diff = p1 - p2
+    norm = torch.sqrt(torch.sum(torch.square(diff), dim=1))
+    return norm
