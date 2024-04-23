@@ -33,14 +33,15 @@ from legged_navigation.envs.base.legged_robot_config import LeggedRobotCfg, Legg
 
 class AnymalCNavCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
-        num_observations = 52 # measure height = 187 
+        num_observations = 45 # base obs = 42 / measure height = 187 
+        goal_pos_type = "relative" # select measured goal position ['relative', 'absolute']
         num_envs = 4096       # number of environment default = 4096
         num_actions = 12      # number of action equal to Dof (control with actuator network)
         send_timeouts = True  # send time out information to the algorithm
-        episode_length_s = 20 # episode length in seconds
+        episode_length_s = 6  # episode length in seconds
         env_spacing = 3.      # not used with heightfields/trimeshes
         
-        num_steps_per_env = 24 # use for save log in each iteration (need to equal to nnum_steps_per_env in train config)
+        num_steps_per_env = 48 # use for save log in each iteration (need to equal to nnum_steps_per_env in train config)
         
     class terrain( LeggedRobotCfg.terrain ):
         # measure terrain
@@ -136,65 +137,82 @@ class AnymalCNavCfg( LeggedRobotCfg ):
         added_mass_range = [-5., 5.]
         
     class commands( LeggedRobotCfg.commands ):
-        curriculum = False # If true the tracking reward is above 80% of the maximum, increase the range of commands
+        curriculum = True # If true the tracking reward is above 80% of the maximum, increase the range of commands
         max_curriculum = 1.
         
         # limit update command range (use if curriculum is True)
         step_height = 0.025 # [m] step to decrease height use when activate command curriculum
         min_height = 0.2
-        step_radius = 0.1   # [m] step to increase radius use when activate command curriculum
-        max_radius = 1
+        step_radius = 0.25   # [m] step to increase radius use when activate command curriculum
+        max_radius = 5
 
-        accept_error = 0.1  # [m] the radius from goal point that consider the agent reach the goal
+        accept_error = 0.25  # [m] the radius from goal point that consider the agent reach the goal
    
-        num_commands = 3 # x, y, z of goal position
-        resampling_time = 10.   # time before command are changed [sec] 
+        num_commands = 3 # x, y, z of goal position on environment frame
+        resampling_time = 10.    # time before command are changed [sec] 
+                                #if equal to episode lenght is equal to resample time it's not resample command during epidsode
                                 # if do not want to resample during episode set more than env.episode_length_s
         heading_command = False # if true: compute ang vel command from heading error (not use in our task)
         
         class ranges:           # range of command
             start_height = 0.35
-            min_radius = 0.2
-            start_max_radius = 0.4
+            min_radius = 0.5
+            start_max_radius = 0.75
 
             base_height = [start_height, 0.6] # min max [m]
             radius = [min_radius, start_max_radius] # min max [m]
             angle = [0, 2*math.pi]
-           
         
     class rewards( LeggedRobotCfg.rewards ):
+        # Config of update reward
         only_positive_rewards = False # if true negative total rewards are clipped at zero (avoids early termination problems)
-        
+        task_reward_time_varying = False    # the task reward will give when only the last period of episode
+        guide_reward_stop = False           # if True the reward guide movement direction will remove if task reward reach 50%
+
         # sigma parameter
-        tracking_height = 0.001 # tracking reward = exp(-error^2/sigma) for height
-        tracking_goal_point = 0.001 
-        tracking_velocity = 0.01
-        velocity_target = 0.5
+        tracking_height = 0.01 # tracking reward = exp(-error^2/sigma) for height
+        tracking_goal_point = 0.01 
+        # target value
+        velocity_target = 0.1 # target velocity in stall penalty (m/s)
 
         soft_dof_pos_limit = 1. # percentage of urdf limits, values above this limit are penalized
         soft_dof_vel_limit = 1.
         soft_torque_limit = 1.
         base_height_target = 0.4 # not use for our code which tracking from command
         max_contact_force = 500. # forces above this value are penalized
-        
+         
         class scales( LeggedRobotCfg.rewards.scales ):
             # pre defined reward function
-            lin_vel_z = -4.0
-            ang_vel_xy = -0.05
+            
+            # Ref paper
+            lin_vel_z = -0.0
+            ang_vel_xy = -0.0
             torques = -0.00002
             action_rate = -0.25
             feet_air_time = 2.0
             collision = -0.001
+            dof_acc = -2.5e-7
+
+            # Mine
+            # lin_vel_z = -4.0
+            # ang_vel_xy = -0.05
+            # torques = -0.00002
+            # action_rate = -0.25
+            # feet_air_time = 2.0
+            # collision = -0.001
             
-            # add my own reward functions
-            tracking_lin_vel = 1.0
+            # Add my own reward functions
+            # Task
             tracking_height = 1.0
-            tracking_goal_point = 1.0
-            reach_goal = 1.0
+            tracking_position = 1.0
+            stall = -1.0
+            guide = 1.0
+
+            reach_goal = 0.0
             time_step = 0.0
             
-            # unenble some reward functions
-            dof_acc = -0.0
+            # Unenble some reward functions
+            # dof_acc = -0.0
             termination = -0.0
             tracking_ang_vel = 0.
             base_height = 0. # unused fix base height reward
@@ -203,6 +221,7 @@ class AnymalCNavCfg( LeggedRobotCfg ):
             dof_vel = -0.
             orientation = -0.
             tracking_orientation = 0.0
+            tracking_lin_vel = 0.0
             
 class AnymalCNavCfgPPO( LeggedRobotCfgPPO ):
     seed = 1
@@ -231,12 +250,12 @@ class AnymalCNavCfgPPO( LeggedRobotCfgPPO ):
     class runner( LeggedRobotCfgPPO.runner ):
         policy_class_name = 'ActorCritic'
         algorithm_class_name = 'PPO'
-        num_steps_per_env = 24 # per iteration
+        num_steps_per_env = 48 # per iteration
         max_iterations = 400 # number of policy updates
         
         # logging
         save_interval = 50 # check for potential saves every this many iterations
-        run_name = 'test5'               # sub experiment of each domain => save as name of folder
+        run_name = 'Ref_command_cur'               # sub experiment of each domain => save as name of folder
         experiment_name = 'anymal_c_nav' # domain of experiment
         
         # load and resume

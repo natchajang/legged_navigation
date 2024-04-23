@@ -31,7 +31,7 @@
 import torch
 from torch import Tensor
 import numpy as np
-from isaacgym.torch_utils import quat_apply, normalize
+from isaacgym.torch_utils import quat_apply, normalize, quat_conjugate, quat_rotate_inverse
 from typing import Tuple
 
 # @ torch.jit.script
@@ -57,6 +57,22 @@ def torch_rand_sqrt_float(lower, upper, shape, device):
 
 # calculate euclidean distance between 2 points
 def euclidean_distance(p1:torch.tensor, p2:torch.tensor):
+    """
+    p1 and p2 are points shape: (num_point, dimension)
+    """
     diff = p1 - p2
-    norm = torch.sqrt(torch.sum(torch.square(diff), dim=1))
+    norm = torch.sqrt( torch.sum( torch.square(diff), dim=1 ) )
     return norm
+
+# transformation point on frame1 (env) to the frame2 (agent) => point on env that are expressed in agent frame
+def transformation_inverse(q:torch.tensor, t:torch.tensor, g:torch.tensor):
+    """
+    q is orientation of frame2 (agent) express on frame1 (env)      shape: (num_envs, 4)
+    t is origin position of frame2 (agent) relative to frame1 (env) shape: (num_envs, 3)
+    g is point position on frame1 (env)                             shape: (num_envs, 3)
+    """
+    t_extend = torch.cat([t, torch.ones(t.shape[0], 1, device=t.device)], dim=-1)
+    T_inv = quat_conjugate(t_extend)[:, :-1]
+    a = T_inv + g                          # inverse translation
+    b = quat_rotate_inverse(q, a)          # inverse rotation
+    return b

@@ -90,6 +90,9 @@ def play(args):
     
     # prepare environment
     env, _ = task_registry.make_env(name=args.task, args=args, env_cfg=env_cfg)
+    env.command_ranges["radius"][0] = 2
+    env.command_ranges["radius"][1] = 2.5
+    env.command_ranges["base_height"][0] = 0.2
     obs = env.get_observations()
     
     # set needed variable
