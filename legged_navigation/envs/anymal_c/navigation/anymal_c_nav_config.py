@@ -40,8 +40,10 @@ class AnymalCNavCfg( LeggedRobotCfg ):
         send_timeouts = True  # send time out information to the algorithm
         episode_length_s = 6  # episode length in seconds
         env_spacing = 3.      # not used with heightfields/trimeshes
-        
         num_steps_per_env = 48 # use for save log in each iteration (need to equal to nnum_steps_per_env in train config)
+        
+        # save log config
+        save_log_steps = False
         
     class terrain( LeggedRobotCfg.terrain ):
         # measure terrain
@@ -50,8 +52,8 @@ class AnymalCNavCfg( LeggedRobotCfg ):
         measured_points_y = [-0.5, -0.4, -0.3, -0.2, -0.1, 0., 0.1, 0.2, 0.3, 0.4, 0.5]
         # terrain type
         mesh_type = 'plane' # ['plane', 'box']
-        terrain_kwargs = {'num_obs':{'max':50, 'step':10}, 'obs_height':{'max':0.25, 'step':0.05}, 
-                          'obs_width':{'max':1, 'step':0.2}, 'obs_length':{'max':2, 'step':0.4}} 
+        terrain_kwargs = {  'num_obs':{'max':50, 'step':10}, 'obs_height':{'max':0.25, 'step':0.05}, 
+                            'obs_width':{'max':1, 'step':0.2}, 'obs_length':{'max':2, 'step':0.4}} 
                         # Dict of arguments for selected terrain
                         # num_ods is number of obstacle
                         # dimension is in meters
@@ -67,7 +69,7 @@ class AnymalCNavCfg( LeggedRobotCfg ):
         # for rough terrain except "plane" type
         curriculum = False # for increase difficulty of obstcle (box size)
         selected = False # select a unique terrain type and pass all arguments
-   
+
         max_init_terrain_level = 1 # starting curriculum state
         terrain_length = 16. # length of terrain per 1 level
         terrain_width = 16. # width of terrain per 1 level
@@ -146,11 +148,11 @@ class AnymalCNavCfg( LeggedRobotCfg ):
         step_radius = 0.25   # [m] step to increase radius use when activate command curriculum
         max_radius = 5
 
-        accept_error = 0.25  # [m] the radius from goal point that consider the agent reach the goal
-   
+        accept_error = 0.1  # [m] the radius from goal point that consider the agent reach the goal
+
         num_commands = 3 # x, y, z of goal position on environment frame
-        resampling_time = 10.    # time before command are changed [sec] 
-                                #if equal to episode lenght is equal to resample time it's not resample command during epidsode
+        resampling_time = 10.   # time before command are changed [sec] 
+                                # if equal to episode lenght is equal to resample time it's not resample command during epidsode
                                 # if do not want to resample during episode set more than env.episode_length_s
         heading_command = False # if true: compute ang vel command from heading error (not use in our task)
         
@@ -164,14 +166,15 @@ class AnymalCNavCfg( LeggedRobotCfg ):
             angle = [0, 2*math.pi]
         
     class rewards( LeggedRobotCfg.rewards ):
-        # Config of update reward
-        only_positive_rewards = False # if true negative total rewards are clipped at zero (avoids early termination problems)
-        task_reward_time_varying = False    # the task reward will give when only the last period of episode
-        guide_reward_stop = False           # if True the reward guide movement direction will remove if task reward reach 50%
-
+        # Config of updating reward
+        only_positive_rewards = False   # if true negative total rewards are clipped at zero (avoids early termination problems)
+        guide_reward_stop = True        # if True the reward guide movement direction will remove if task reward reach 50%
+        condition_guide_stop = "task_progress"  # use when guide_reward_stop is True: option ['first_iteration', 'task_progress']
+        guide_stop_reach = 0.6
+        
         # sigma parameter
-        tracking_height = 0.01 # tracking reward = exp(-error^2/sigma) for height
-        tracking_goal_point = 0.01 
+        tracking_height = 0.01 # tracking reward = exp(-error^2/sigma)
+        tracking_goal_point = 1.5
         # target value
         velocity_target = 0.1 # target velocity in stall penalty (m/s)
 
@@ -180,26 +183,13 @@ class AnymalCNavCfg( LeggedRobotCfg ):
         soft_torque_limit = 1.
         base_height_target = 0.4 # not use for our code which tracking from command
         max_contact_force = 500. # forces above this value are penalized
-         
-        class scales( LeggedRobotCfg.rewards.scales ):
-            # pre defined reward function
-            
-            # Ref paper
-            lin_vel_z = -0.0
-            ang_vel_xy = -0.0
+        class scales( LeggedRobotCfg.rewards.scales ):        
+            # Locomotion
             torques = -0.00002
             action_rate = -0.25
             feet_air_time = 2.0
             collision = -0.001
             dof_acc = -2.5e-7
-
-            # Mine
-            # lin_vel_z = -4.0
-            # ang_vel_xy = -0.05
-            # torques = -0.00002
-            # action_rate = -0.25
-            # feet_air_time = 2.0
-            # collision = -0.001
             
             # Add my own reward functions
             # Task
@@ -207,12 +197,11 @@ class AnymalCNavCfg( LeggedRobotCfg ):
             tracking_position = 1.0
             stall = -1.0
             guide = 1.0
-
-            reach_goal = 0.0
-            time_step = 0.0
+            reach_goal = 100.0
             
-            # Unenble some reward functions
-            # dof_acc = -0.0
+            # Unused some reward functions
+            lin_vel_z = -0.0
+            ang_vel_xy = -0.0
             termination = -0.0
             tracking_ang_vel = 0.
             base_height = 0. # unused fix base height reward
@@ -255,8 +244,8 @@ class AnymalCNavCfgPPO( LeggedRobotCfgPPO ):
         
         # logging
         save_interval = 50 # check for potential saves every this many iterations
-        run_name = 'Ref_command_cur'               # sub experiment of each domain => save as name of folder
-        experiment_name = 'anymal_c_nav' # domain of experiment
+        run_name = 'reach_goal_reducevel'               # sub experiment of each domain => save as name of folder
+        experiment_name = 'anymal_c_nav'            # domain of experiment
         
         # load and resume
         resume = False

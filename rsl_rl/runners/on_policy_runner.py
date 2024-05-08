@@ -46,10 +46,10 @@ from collections import defaultdict
 class OnPolicyRunner:
 
     def __init__(self,
-                 env: VecEnv,
-                 train_cfg,
-                 log_dir=None,
-                 device='cpu'):
+                env: VecEnv,
+                train_cfg,
+                log_dir=None,
+                device='cpu'):
 
         self.cfg=train_cfg["runner"]
         self.alg_cfg = train_cfg["algorithm"]
@@ -113,7 +113,7 @@ class OnPolicyRunner:
         critic_obs = privileged_obs if privileged_obs is not None else obs
         obs, critic_obs = obs.to(self.device), critic_obs.to(self.device)
 
-        if self.actor_critic_class == ActorCriticCNN:
+        if self.actor_critic_class == ActorCriticCNN: # if require image data to CNN model
             camera_obs = self.env.get_camera_observation()
 
         self.alg.actor_critic.train() # switch to train mode (for dropout for example)
@@ -170,7 +170,7 @@ class OnPolicyRunner:
             stop = time.time()
             learn_time = stop - start
             if self.log_dir is not None:
-                self.log(locals())
+                self.log(locals())      
             if it % self.save_interval == 0:
                 self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(it)))
             ep_infos.clear()

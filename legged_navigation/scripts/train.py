@@ -44,23 +44,30 @@ import torch
 
 from isaacgym import gymutil
 
-# train function
+# train function for Navigation Task (AnymalNav)
 def train(args):
+    # create object from config
     env, env_cfg = task_registry.make_env(name=args.task, args=args)
     ppo_runner, train_cfg = task_registry.make_alg_runner(env=env, name=args.task, args=args)
     
-    if args.command_viz and isinstance(env, AnymalNav):
+    # overwrite attribute of visualization from user to env
+    if args.command_viz and hasattr(env, 'command_viz'):
         env.commands_viz = True
-    
-    if args.camera_viz and isinstance(env, AnymalNav):
+    if args.camera_viz and hasattr(env, 'camera_image_viz'):
         env.camera_image_viz = True
         
-    # print env and policy info form configuration
-    print("task: {} run name: {}------------------------".format(args.task, train_cfg.runner.run_name))
-    print("num_envs : {} mesh_type : {}".format(env.num_envs, env.cfg.terrain.mesh_type))
-    print("State space\n num_observations: {}\n measure height: {}\n".format(env_cfg.env.num_observations, env_cfg.terrain.measure_heights))
-    # if isinstance(env_cfg, AnymalCNavCfg): print("Reward\n function type:{}\n".format(env_cfg.rewards.reward_tracking))
-    # if isinstance(env_cfg, AnymalCNavCfg): print("Camera Sensor\n Active: {}\n Image Type: {}\n".format(env_cfg.camera.active, env_cfg.camera.image_type))
+    # print env and policy config
+    print("task: {} run name: {}------------------------".format(args.task, 
+                                                                train_cfg.runner.run_name))
+    print("num_envs: {} mesh_type: {}\n".format(env.num_envs, 
+                                            env.cfg.terrain.mesh_type))
+    print("State space\n num_observations: {}\n measure height: {}".format(env_cfg.env.num_observations, 
+                                                                            env_cfg.terrain.measure_heights))
+    print(" goal position type: {}\n".format(env_cfg.env.goal_pos_type))
+    print("Reward\n Stop guide reward: {}".format(env_cfg.rewards.guide_reward_stop))
+    if env_cfg.rewards.guide_reward_stop:
+        print(" condition to stop: {}\n tracking_position reach: {}\n".format(env_cfg.rewards.condition_guide_stop,
+                                                                            env_cfg.rewards.guide_stop_reach))
     print("Terrain\n mesh type: {}\n ".format(env_cfg.terrain.mesh_type))
     print("Techniuqe\n terrain cur: {}\n command cur: {}\n positive rew: {}\n".format(env_cfg.terrain.curriculum,
                                                                                     env_cfg.commands.curriculum,
@@ -68,10 +75,10 @@ def train(args):
     print("Resume : {}\n".format(train_cfg.runner.resume))
     print("----------------------------------------------")
 
-    # train ppo
+    # train by ppo
     ppo_runner.learn(num_learning_iterations=train_cfg.runner.max_iterations, init_at_random_ep_len=True)
     
-    # save obj for play next time
+    # save obj (env_config and training_cinfig) for load and play
     helpers.save_env_cfg(env_cfg,  train_cfg, ppo_runner)
     # save log of reward if it has logger attribute
     if 'logger' in dir(env):
