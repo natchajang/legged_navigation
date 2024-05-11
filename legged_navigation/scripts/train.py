@@ -56,34 +56,37 @@ def train(args):
     if args.camera_viz and hasattr(env, 'camera_image_viz'):
         env.camera_image_viz = True
         
-    # print env and policy config
+    # print env and policy config ############################################################################
     print("task: {} run name: {}------------------------".format(args.task, 
-                                                                train_cfg.runner.run_name))
+                                                                  train_cfg.runner.run_name))
     print("num_envs: {} mesh_type: {}\n".format(env.num_envs, 
-                                            env.cfg.terrain.mesh_type))
+                                                env.cfg.terrain.mesh_type))
     print("State space\n num_observations: {}\n measure height: {}".format(env_cfg.env.num_observations, 
                                                                             env_cfg.terrain.measure_heights))
     print(" goal position type: {}\n".format(env_cfg.env.goal_pos_type))
     print("Reward\n Stop guide reward: {}".format(env_cfg.rewards.guide_reward_stop))
+
     if env_cfg.rewards.guide_reward_stop:
         print(" condition to stop: {}\n tracking_position reach: {}\n".format(env_cfg.rewards.condition_guide_stop,
-                                                                            env_cfg.rewards.guide_stop_reach))
+                                                                                env_cfg.rewards.guide_stop_reach))
     print("Terrain\n mesh type: {}\n ".format(env_cfg.terrain.mesh_type))
     print("Techniuqe\n terrain cur: {}\n command cur: {}\n positive rew: {}\n".format(env_cfg.terrain.curriculum,
-                                                                                    env_cfg.commands.curriculum,
-                                                                                    env_cfg.rewards.only_positive_rewards))
+                                                                                        env_cfg.commands.curriculum,
+                                                                                        env_cfg.rewards.only_positive_rewards))
     print("Resume : {}\n".format(train_cfg.runner.resume))
     print("----------------------------------------------")
 
-    # train by ppo
+    # train by ppo ##########################################################################################
     ppo_runner.learn(num_learning_iterations=train_cfg.runner.max_iterations, init_at_random_ep_len=True)
     
-    # save obj (env_config and training_cinfig) for load and play
+    # save obj (env_config and training_cinfig) for load and re-play policy #################################
     helpers.save_env_cfg(env_cfg,  train_cfg, ppo_runner)
-    # save log of reward if it has logger attribute
-    if 'logger' in dir(env):
-        print(type(env.logger))
-        helpers.save_log(env.logger.state_log, ppo_runner.log_dir, 'training_log.pkl')
+
+    # save log (progress during training) ###################################################################
+    if 'logger' in dir(env) and 'logger' in dir(ppo_runner):
+        merge_dict = {**env.logger.state_log, **ppo_runner.logger.state_log}
+        # print(merge_dict)
+        helpers.save_log(merge_dict, ppo_runner.log_dir, 'training_log.pkl')
 
 if __name__ == '__main__':
     args = get_args()

@@ -62,11 +62,12 @@ def play(args):
     load_path = os.path.join(load_dir, args.load_run)
     
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
-    #write over config from saved file
+    # write over config from saved file
     helpers.rideover_cfg(load_path, env_cfg, train_cfg)
 
     # override some parameters for testing
-    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 50) # limit number of visualization environments
+    env_cfg.commands.reachgoal_resample = True              # change mode to resample when the agent reach the goal
+    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 50)    # limit number of visualization environments
     env_cfg.terrain.num_rows = 1
     env_cfg.terrain.num_cols = 1
     env_cfg.terrain.curriculum = False
@@ -76,12 +77,15 @@ def play(args):
     env_cfg.domain_rand.push_robots = False
     
     env_cfg.env.episode_length_s = 100
-    env_cfg.commands.resampling_time = 6
+    env_cfg.commands.resampling_time = env_cfg.env.episode_length_s
+    env_cfg.commands.ranges.radius[0] = 2
+    env_cfg.commands.ranges.radius[1] = 2
+    env_cfg.commands.ranges.base_height[0] = 0.3
     
     #set viewer pos and lookat
-    env_cfg.viewer.pos = [16, 0, 5] #[11, 5, 2]
-    env_cfg.viewer.lookat = [0, 0,0]#[8, 8, 0]
-    
+    env_cfg.viewer.pos = [16, 0, 5]     #[11, 5, 2]
+    env_cfg.viewer.lookat = [0, 0,0]    #[8, 8, 0]
+
     move_came = False
     camera_position = np.array(env_cfg.viewer.pos, dtype=np.float64)
     camera_vel = np.array([0.3, 0, 0.])
@@ -90,10 +94,6 @@ def play(args):
     
     # prepare environment
     env, _ = task_registry.make_env(name=args.task, args=args, env_cfg=env_cfg)
-    env.command_ranges["radius"][0] = 2
-    env.command_ranges["radius"][1] = 2
-    env.command_ranges["base_height"][0] = 0.225
-
     obs = env.get_observations()
     
     # set needed variable
@@ -106,33 +106,6 @@ def play(args):
     stop_rew_log = env.max_episode_length + 1 # number of steps before print average episode rewards
     
     # Add logger for save and analysis
-    # logger_save = Logger(env.dt)
-    # logger_save.log_state('dt', env.dt)
-    # logger_save.log_state('num_samples', number_iter*episode_length)
-    
-    # change command if set desired command
-    # if args.command_set != None:
-    #     env.command_set_flag =True
-    #     command_set = helpers.comand_set_parse(args.command_set)
-    #     list_timestamp = []
-    #     list_commands = []
-    #     command_idx = 0
-    #     episode_length = 0
-    #     for c in command_set:
-    #         # add time stamp to switch commands
-    #         episode_length += int(c[-1]/env.dt)
-    #         list_timestamp.append(episode_length)
-    #         c = [e*math.pi/180 if i>2 and i<6 else e for i,e in enumerate(c)][:-1]
-    #         c[0] = c[0]/100
-    #         c[1] = c[1]/100
-    #         c[2] = c[2]/100
-    #         command = torch.tensor(c, device=env.device, requires_grad=False)
-    #         command = command.repeat(env_cfg.env.num_envs, 1)
-    #         list_commands.append(command)
-    #     env.cfg.commands.resampling_time = 2*int(episode_length/env.dt)
-    #     env.command_own = list_commands[command_idx]
-        
-    #Add logger for save and analysis
     logger_save = Logger(env.dt)
     logger_save.log_state('dt', env.dt)
     logger_save.log_state('num_samples', number_iter*episode_length)
@@ -167,8 +140,6 @@ def play(args):
         export_policy_as_jit(ppo_runner.alg.actor_critic, path)
         print('Exported policy as jit script to: ', path)
         
-    first_state = env.root_states[:, :2].clone().detach()
-    desired_distance = torch.norm(env.commands[:, :2], dim=1)*20*0.8
     for i in range(number_iter*int(episode_length)):
 
         # if args.command_set != None:
@@ -213,14 +184,7 @@ def play(args):
         #             'distance_y' : env.root_states[robot_index, 1].item()
         #         }
             # )
-    # desired_distance = torch.norm(env.commands[:, :2], dim=1)*20*0.5
-    # print("Command: ", torch.norm(env.commands[:, :2], dim=1))
-    # walk_distance = torch.norm(env.root_states[:, :2]-first_state, dim=1)
-    # print("Desired Distance: ", desired_distance)
-    # print("Walk Distance: ", walk_distance)
-    # reach_half = torch.where(walk_distance> desired_distance, 1, 0)
-    # print("Reach half distance", reach_half)
-    # print("Sum", torch.sum(reach_half))
+
     
     helpers.save_log(logger_save.state_log, load_path, 'state_log.pkl')
 

@@ -39,6 +39,9 @@ import torch
 from rsl_rl.algorithms import PPO
 from rsl_rl.modules import ActorCritic, ActorCriticCNN
 from rsl_rl.env import VecEnv
+from rsl_rl.utils import Logger
+
+import legged_navigation
 
 from typing import Union
 from collections import defaultdict
@@ -98,6 +101,7 @@ class OnPolicyRunner:
         self.tot_timesteps = 0
         self.tot_time = 0
         self.current_learning_iteration = 0
+        self.logger = Logger(self.env.dt)   # log for store value loss, episode length, ... during training
 
         _ = self.env.reset()
     
@@ -182,7 +186,6 @@ class OnPolicyRunner:
         self.tot_timesteps += self.num_steps_per_env * self.env.num_envs
         self.tot_time += locs['collection_time'] + locs['learn_time']
         iteration_time = locs['collection_time'] + locs['learn_time']
-
         ep_string = f''
         if locs['ep_infos']:
             for key in locs['ep_infos'][0]:
@@ -246,6 +249,23 @@ class OnPolicyRunner:
                        f"""{'ETA:':>{pad}} {self.tot_time / (locs['it'] + 1) * (
                                locs['num_learning_iterations'] - locs['it']):.1f}s\n""")
         print(log_string)
+
+        # store need values
+        if len(locs['rewbuffer']) > 0:
+            store_dict = {"iteration_runner": locs['it'] + 1,
+                        "mean_value_loss": locs['mean_value_loss'],
+                        "mean_surrogate_loss": locs['mean_surrogate_loss'],
+                        "mean_action_noise": mean_std.item(),
+                        "mean_reward": statistics.mean(locs['rewbuffer']),
+                        "mean_episode_length": statistics.mean(locs['lenbuffer'])}
+        else:
+            store_dict = {"iteration_runner": locs['it'] + 1,
+                        "mean_value_loss": locs['mean_value_loss'],
+                        "mean_surrogate_loss": locs['mean_surrogate_loss'],
+                        "mean_action_noise": mean_std.item(),
+                        "mean_reward": 0,
+                        "mean_episode_length": 0}
+        self.logger.log_states(store_dict)
 
     def save(self, path, infos=None):
         torch.save({
