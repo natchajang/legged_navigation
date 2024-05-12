@@ -55,8 +55,13 @@ class AnymalNav(LeggedRobot):
         # additional attributes
         # flags
         self.commands_viz = False   # for visualizing command
-        
+        # command set waypoints
+        self.idx_waypoints = torch.zeros(self.num_envs, dtype=int, device=self.device)
+        self.num_waypoints = None
+        self.command_waypoints = None
+
         self.reach_goal_buf = torch.zeros(self.num_envs, device=self.device)
+        self.reach_goal_count = torch.zeros(self.num_envs, device=self.device)
         #log
         self.logger = Logger(dt=self.dt)
         self.reward_saved_dict = defaultdict(list)
@@ -95,6 +100,9 @@ class AnymalNav(LeggedRobot):
         # compute observations, rewards, resets, ...
         self.check_termination()
         self.compute_reward()
+
+        self.store_log()            # store log for analysis training progress
+
         env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
         self.reset_idx(env_ids)
 
@@ -103,8 +111,6 @@ class AnymalNav(LeggedRobot):
         self.last_actions[:] = self.actions[:]
         self.last_dof_vel[:] = self.dof_vel[:]
         self.last_root_vel[:] = self.root_states[:, 7:13]
-        
-        self.store_log()            # store log for analysis training progress
         
         if self.viewer and self.enable_viewer_sync:
             self.gym.clear_lines(self.viewer)
@@ -121,9 +127,6 @@ class AnymalNav(LeggedRobot):
         self.time_out_buf = self.episode_length_buf > self.max_episode_length # no terminal reward for time-outs
         self.reset_buf |= self.time_out_buf
 
-        # check reach goal when the agent is in acceptable boundary of the goal state in 3D space
-        self.reach_goal_buf = torch.where(euclidean_distance(self.root_states[:, : 3], self.commands) <= self.cfg.commands.accept_error, True, False)
-    
     def reset_idx(self, env_ids):
         """ Reset some environments.
             Calls self._reset_dofs(env_ids), self._reset_root_states(env_ids), and self._resample_commands(env_ids)
@@ -180,6 +183,7 @@ class AnymalNav(LeggedRobot):
         self.feet_air_time[env_ids] = 0.
         self.episode_length_buf[env_ids] = 0
         self.reset_buf[env_ids] = 1
+
         # fill extras
         self.extras["episode"] = {}
         for key in self.episode_sums.keys():
@@ -191,9 +195,13 @@ class AnymalNav(LeggedRobot):
         if self.cfg.commands.curriculum:
             self.extras["episode"]["max_command_radius"] = self.command_ranges["radius"][1]
             self.extras["episode"]["min_command_height"] = self.command_ranges["base_height"][0]
+            self.extras["episode"]["reach_rate"] = torch.count_nonzero(self.reach_goal_count[env_ids]) / len(env_ids)
         # send timeout info to the algorithm
         if self.cfg.env.send_timeouts:
             self.extras["time_outs"] = self.time_out_buf
+
+        # reset reach goal count when terminate
+        self.reach_goal_count[env_ids] = 0 
 
         # Additionaly empty actuator network hidden states
         self.sea_hidden_state_per_env[:, env_ids] = 0.
@@ -283,8 +291,16 @@ class AnymalNav(LeggedRobot):
         """
         resample_buf = (self.episode_length_buf % int(self.cfg.commands.resampling_time / self.dt) == 0 )
 
+        # check reach goal when the agent is in acceptable boundary of the goal state in 3D space
+        self.reach_goal_buf = torch.where(euclidean_distance(self.root_states[:, : 3], self.commands) <= self.cfg.commands.accept_error, True, False)
+        reach_goal_env_ids = self.reach_goal_buf.nonzero(as_tuple=False).flatten()
+        self.reach_goal_count[reach_goal_env_ids] += 1
+
         if self.cfg.commands.reachgoal_resample: # if flag resample when the agent reach goal activate
-            resample_buf |= torch.where(euclidean_distance(self.root_states[:, : 3], self.commands) <= self.cfg.commands.accept_error, True, False)  # resample command in env which reach goal
+            resample_buf |= self.reach_goal_buf  # resample command in env which reach goal
+        
+        else: # not resample when reach goal => consider can reach goal for only one times.
+            self.reach_goal_count = torch.clip(self.reach_goal_count, 0, 1)
         
         # env_ids is id of environment which run equal to resampling_time
         env_ids = resample_buf.nonzero(as_tuple=False).flatten()
@@ -329,6 +345,8 @@ class AnymalNav(LeggedRobot):
         self.commands[env_ids, 0] = x
         self.commands[env_ids, 1] = y
         self.commands[env_ids, 2] = z
+
+        self.waypoints_set(env_ids)     # over write command if predefine waypoints
     
     def update_command_curriculum(self, env_ids):
         """ Implements a curriculum of increasing commands range for random
@@ -336,12 +354,13 @@ class AnymalNav(LeggedRobot):
             env_ids (List[int]): ids of environments being reset
         """
         
-        reach_rate = torch.count_nonzero(torch.logical_and(self.reach_goal_buf, self.reset_buf)) / torch.count_nonzero(self.reset_buf)
+        reach_rate = torch.count_nonzero(self.reach_goal_count[env_ids]) / len(env_ids)
         if  reach_rate > 0.8:
             self.command_ranges["radius"][1] = np.clip(self.command_ranges["radius"][1] + self.cfg.commands.step_radius, 0., self.cfg.commands.max_radius)
-        
-        if torch.mean(self.episode_sums["tracking_height"][env_ids]) / self.max_episode_length > 0.8 * self.reward_scales["tracking_height"]:
             self.command_ranges["base_height"][0] = np.clip(self.command_ranges["base_height"][0] - self.cfg.commands.step_height, self.cfg.commands.min_height, np.inf)
+        
+        # if torch.mean(self.episode_sums["tracking_height"][env_ids]) / self.max_episode_length > 0.8 * self.reward_scales["tracking_height"]:
+        #     self.command_ranges["base_height"][0] = np.clip(self.command_ranges["base_height"][0] - self.cfg.commands.step_height, self.cfg.commands.min_height, np.inf)
         
     def store_log(self): 
         """For store tracking reward, sum reward, ... in logger
@@ -349,14 +368,15 @@ class AnymalNav(LeggedRobot):
 
         for name in self.reward_names:
             self.reward_saved_dict[name].append(self.extras["episode"]['rew_' + name].item())
-        env_ids = self.reset_buf.nonzero(as_tuple=False)
+
+        env_ids = self.reset_buf.nonzero(as_tuple=False)    # index of reset environments
         self.cur_reward_sum += self.rew_buf
         self.rewbuffer.extend(self.cur_reward_sum[env_ids][:, 0].cpu().numpy().tolist())
         self.cur_reward_sum[env_ids] = 0
         
-        self.num_reset += torch.count_nonzero(self.reset_buf)
-        self.num_reach += torch.count_nonzero(torch.logical_and(self.reach_goal_buf, self.reset_buf))
-        
+        self.num_reset += len(env_ids)
+        self.num_reach += torch.count_nonzero(self.reach_goal_count[env_ids])
+      
         if self.cfg.env.save_log_steps or self.common_step_counter % self.cfg.env.num_steps_per_env == 0:
             for name in self.reward_saved_dict.keys():
                 self.logger.log_states({name : statistics.mean(self.reward_saved_dict[name])})
@@ -386,7 +406,18 @@ class AnymalNav(LeggedRobot):
             
             self.logger.log_states({'step_count' : self.common_step_counter})
             self.logger.log_states({'iteration' : self.common_step_counter // self.cfg.env.num_steps_per_env})
-            
+    
+    def waypoints_set(self, env_ids):
+        if self.num_waypoints != None:
+            # set command at env_ids
+            self.commands[env_ids, 0] = self.command_waypoints[self.idx_waypoints, 0]
+            self.commands[env_ids, 1] = self.command_waypoints[self.idx_waypoints, 1]
+            self.commands[env_ids, 2] = self.command_waypoints[self.idx_waypoints, 2]
+
+            # update idx command of env_ids (clip in range 0 to num_waypoints)
+            self.idx_waypoints[env_ids] += 1
+            self.idx_waypoints = torch.clip(self.idx_waypoints, 0, self.num_waypoints - 1)
+
     def _draw_debug_vis(self):
         """ Draws visualizations for dubugging (slows down simulation a lot).
             Default behaviour: draws height measurement points
@@ -450,4 +481,4 @@ class AnymalNav(LeggedRobot):
         return torch.clip(dot_product / (norm_vel * norm_distance), 0, 1)
     
     def _reward_reach_goal(self):
-        return torch.where(euclidean_distance(self.root_states[:, : 3], self.commands) <= self.cfg.commands.accept_error, 1, 0)
+        return self.reach_goal_buf

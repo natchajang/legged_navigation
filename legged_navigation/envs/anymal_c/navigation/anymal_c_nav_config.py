@@ -154,7 +154,7 @@ class AnymalCNavCfg( LeggedRobotCfg ):
         resampling_time = 10.   # time before command are changed [sec] 
                                 # if equal to episode lenght is equal to resample time it's not resample command during epidsode
                                 # if do not want to resample during episode set more than env.episode_length_s
-        reachgoal_resample = False  # flag for resmaple when the agent reach goal
+        reachgoal_resample = True  # flag for resmaple when the agent reach goal
         heading_command = False     # if true: compute ang vel command from heading error (not use in our task)
         
         class ranges:           # range of command
@@ -170,7 +170,7 @@ class AnymalCNavCfg( LeggedRobotCfg ):
         only_positive_rewards = False   # if true negative total rewards are clipped at zero (avoids early termination problems)
         guide_reward_stop = True        # if True the reward guide movement direction will remove if task reward reach 50%
         condition_guide_stop = "task_progress"  # use when guide_reward_stop is True: option ['first_iteration', 'task_progress']
-        guide_stop_reach = 0.6
+        guide_stop_reach = 0.8
         
         # sigma parameters
         tracking_height = 0.01          # sigma => tracking reward = exp(-error^2/sigma)
@@ -200,7 +200,7 @@ class AnymalCNavCfg( LeggedRobotCfg ):
             tracking_position = 1.0
             stall = -1.0
             guide = 1.0
-            reach_goal = 1.0
+            reach_goal = 300.0
             
             # Unused reward functions
             termination = -0.0
@@ -245,7 +245,7 @@ class AnymalCNavCfgPPO( LeggedRobotCfgPPO ):
         
         # logging
         save_interval = 50 # check for potential saves every this many iterations
-        run_name = 'test1'               # sub experiment of each domain => save as name of folder
+        run_name = 'test5'               # sub experiment of each domain => save as name of folder
         experiment_name = 'anymal_c_nav'            # domain of experiment
         
         # load and resume

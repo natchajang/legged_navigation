@@ -67,7 +67,7 @@ def play(args):
 
     # override some parameters for testing
     env_cfg.commands.reachgoal_resample = True              # change mode to resample when the agent reach the goal
-    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 50)    # limit number of visualization environments
+    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 5)     # limit number of visualization environments
     env_cfg.terrain.num_rows = 1
     env_cfg.terrain.num_cols = 1
     env_cfg.terrain.curriculum = False
@@ -76,15 +76,22 @@ def play(args):
     env_cfg.domain_rand.randomize_friction = False
     env_cfg.domain_rand.push_robots = False
     
-    env_cfg.env.episode_length_s = 100
-    env_cfg.commands.resampling_time = env_cfg.env.episode_length_s
-    env_cfg.commands.ranges.radius[0] = 2
-    env_cfg.commands.ranges.radius[1] = 2
-    env_cfg.commands.ranges.base_height[0] = 0.3
+    time_play_s = 30
+    env_cfg.env.episode_length_s = time_play_s
+    env_cfg.commands.resampling_time = time_play_s + 1
+    env_cfg.commands.ranges.radius[0] = 5
+    env_cfg.commands.ranges.radius[1] = 5
+    env_cfg.commands.ranges.base_height[0] = 0.2
+
+    # set ways point command (if need)
+    waypoints = [[2, 0, 0.4], [4, 0, 0.3], [6, 0, 0.2], [8, 0, 0.2], [10, 0, 0.4]] # [x, y, z]
+    num_waypoints = 0 * len(waypoints) # if set = 0 command will random
+    if num_waypoints != 0:
+        env_cfg.env.num_envs = 1
     
-    #set viewer pos and lookat
-    env_cfg.viewer.pos = [16, 0, 5]     #[11, 5, 2]
-    env_cfg.viewer.lookat = [0, 0,0]    #[8, 8, 0]
+    # set viewer pos and lookat
+    env_cfg.viewer.pos = [11, 5, 2]     #[11, 5, 2]
+    env_cfg.viewer.lookat = [0, 0, 0]    #[8, 8, 0]
 
     move_came = False
     camera_position = np.array(env_cfg.viewer.pos, dtype=np.float64)
@@ -95,20 +102,21 @@ def play(args):
     # prepare environment
     env, _ = task_registry.make_env(name=args.task, args=args, env_cfg=env_cfg)
     obs = env.get_observations()
+
+    if num_waypoints !=0:
+        env.num_waypoints = num_waypoints
+        env.command_waypoints = torch.tensor(waypoints, device=env.device)
     
-    # set needed variable
+    # set log variable for saving and analysis
     logger = Logger(env.dt)
-    number_iter = 1
-    episode_length = 3000
+    num_steps = time_play_s / env.dt
     robot_index = 0 # which robot is used for logging
     joint_index = 1 # which joint is used for logging
     stop_state_log = 100 # number of steps before plotting states
     stop_rew_log = env.max_episode_length + 1 # number of steps before print average episode rewards
-    
-    # Add logger for save and analysis
     logger_save = Logger(env.dt)
     logger_save.log_state('dt', env.dt)
-    logger_save.log_state('num_samples', number_iter*episode_length)
+    logger_save.log_state('num_samples', num_steps)
     
     # Visulization setting
     # add open debug_viz
@@ -131,7 +139,9 @@ def play(args):
     print("Techniuqe\n terrain cur: {}\n command cur: {}\n positive rew: {}".format(env_cfg.terrain.curriculum,
                                                                                     env_cfg.commands.curriculum,
                                                                                     env_cfg.rewards.only_positive_rewards))
-    print("Load run\n run: {}\n model: {}".format(train_cfg.runner.load_run, train_cfg.runner.checkpoint))
+    print("Load run\n run: {}\n model: {}\n".format(train_cfg.runner.load_run, train_cfg.runner.checkpoint))
+    print("time play: {}".format(time_play_s))
+    print("steps play: {}".format(int(num_steps)))
     print("----------------------------------------------")
     
     # export policy as a jit module (used to run it from C++)
@@ -139,17 +149,11 @@ def play(args):
         path = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name, 'exported', 'policies')
         export_policy_as_jit(ppo_runner.alg.actor_critic, path)
         print('Exported policy as jit script to: ', path)
-        
-    for i in range(number_iter*int(episode_length)):
 
-        # if args.command_set != None:
-        #     if i==list_timestamp[command_idx]:
-        #         command_idx+=1
-        #         env.command_own = list_commands[command_idx]
-                
+    for i in range(int(num_steps)):
         actions = policy(obs.detach())
         obs, _, rews, dones, infos = env.step(actions.detach())
-        
+ 
         if RECORD_FRAMES:
             if i % 2:
                 filename = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name, 'exported', 'frames', f"{img_idx}.png")
@@ -159,6 +163,7 @@ def play(args):
             camera_position += camera_vel * env.dt
             env.set_camera(camera_position, camera_position + camera_direction)
         
+        # log state
         # logger_save.log_states(
         #         {
         #             'dof_pos_target': actions[robot_index, joint_index].item() * env.cfg.control.action_scale,
