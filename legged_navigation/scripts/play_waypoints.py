@@ -81,10 +81,11 @@ def play(args):
     env_cfg.commands.resampling_time = time_play_s + 1
     env_cfg.commands.ranges.radius[0] = 5
     env_cfg.commands.ranges.radius[1] = 5
-    env_cfg.commands.ranges.base_height[0] = 0.2
+    env_cfg.commands.ranges.base_height[0] = 0.6
 
     # set ways point command (if need)
-    waypoints = [[2, 0, 0.4], [4, 0, 0.3], [6, 0, 0.2], [8, 0, 0.2], [10, 0, 0.4]] # [x, y, z]
+    # waypoints = [[2, 0, 0.4], [4, 0, 0.3], [6, 0, 0.2], [8, 0, 0.2], [10, 0, 0.4]] # [x, y, z]
+    waypoints = [[2, 0, 0.25], [-2, 0, 0.25], [2, 0, 0.25], [-2, 0, 0.25]]
     num_waypoints = 0 * len(waypoints) # if set = 0 command will random
     if num_waypoints != 0:
         env_cfg.env.num_envs = 1
@@ -162,34 +163,6 @@ def play(args):
         if move_came or MOVE_CAMERA:
             camera_position += camera_vel * env.dt
             env.set_camera(camera_position, camera_position + camera_direction)
-        
-        # log state
-        # logger_save.log_states(
-        #         {
-        #             'dof_pos_target': actions[robot_index, joint_index].item() * env.cfg.control.action_scale,
-        #             'dof_pos': env.dof_pos[robot_index, joint_index].item(),
-        #             'dof_vel': env.dof_vel[robot_index, joint_index].item(),
-        #             'dof_torque': env.torques[robot_index, joint_index].item(),
-        #             'command_lin_x': env.commands[robot_index, 0].item(),
-        #             'command_lin_y': env.commands[robot_index, 1].item(),
-        #             'command_height': env.commands[robot_index, 2].item(),
-        #             'command_roll': env.commands[robot_index, 3].item(),
-        #             'command_pitch': env.commands[robot_index, 4].item(),
-        #             'command_yaw': env.commands[robot_index, 5].item(),
-        #             'base_roll' : env.base_euler[robot_index, 0].item(),
-        #             'base_pitch' : env.base_euler[robot_index, 1].item(),
-        #             'base_yaw' : env.base_euler[robot_index, 2].item(),
-        #             'base_pos_x' : env.base_mean_height[robot_index].item(),    
-        #             'base_vel_x': env.base_lin_vel[robot_index, 0].item(),
-        #             'base_vel_y': env.base_lin_vel[robot_index, 1].item(),
-        #             'base_vel_z': env.base_lin_vel[robot_index, 2].item(),
-        #             'base_vel_yaw': env.base_ang_vel[robot_index, 2].item(),
-        #             'contact_forces_z': env.contact_forces[robot_index, env.feet_indices, 2].cpu().numpy(),
-        #             'distance_x' : env.root_states[robot_index, 0].item(),
-        #             'distance_y' : env.root_states[robot_index, 1].item()
-        #         }
-            # )
-
     
     helpers.save_log(logger_save.state_log, load_path, 'state_log.pkl')
 

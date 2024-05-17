@@ -143,10 +143,12 @@ class AnymalCNavCfg( LeggedRobotCfg ):
         max_curriculum = 1.
         
         # limit update command range (use if curriculum is True)
-        step_height = 0.025 # [m] step to decrease height use when activate command curriculum
+        # height
+        step_height = 0.01  # [m] step to decrease height use when activate command curriculum
         min_height = 0.2
+        # radius
         step_radius = 0.25  # [m] step to increase radius use when activate command curriculum
-        max_radius = 5
+        max_radius = 6
 
         accept_error = 0.1  # [m] the radius from goal point that consider the agent reach the goal
 
@@ -158,8 +160,8 @@ class AnymalCNavCfg( LeggedRobotCfg ):
         heading_command = False     # if true: compute ang vel command from heading error (not use in our task)
         
         class ranges:           # range of command
-            start_height = 0.35
-            start_max_radius = 0.75
+            start_height = 0.4
+            start_max_radius = 1
 
             base_height = [start_height, 0.6]   # min max [m]
             radius = [0.5, start_max_radius]    # min max [m]
@@ -241,11 +243,11 @@ class AnymalCNavCfgPPO( LeggedRobotCfgPPO ):
         policy_class_name = 'ActorCritic'
         algorithm_class_name = 'PPO'
         num_steps_per_env = 48 # per iteration
-        max_iterations = 500 # number of policy updates
+        max_iterations = 1000 # number of policy updates
         
         # logging
         save_interval = 50 # check for potential saves every this many iterations
-        run_name = 'test5'               # sub experiment of each domain => save as name of folder
+        run_name = 'run10'               # sub experiment of each domain => save as name of folder
         experiment_name = 'anymal_c_nav'            # domain of experiment
         
         # load and resume

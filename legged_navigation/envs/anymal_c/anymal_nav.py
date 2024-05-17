@@ -160,16 +160,30 @@ class AnymalNav(LeggedRobot):
             "guide" in self.reward_names and 
             (self.common_step_counter % self.cfg.env.num_steps_per_env == 0) and
             (self.common_step_counter // self.cfg.env.num_steps_per_env > 0)):
-        
-            if  (( self.cfg.rewards.condition_guide_stop == 'task_progress' and
-                torch.mean(self.episode_sums["tracking_position"][env_ids]) / self.max_episode_length > self.cfg.rewards.guide_stop_reach * self.reward_scales["tracking_position"]) 
-                or
-                (self.cfg.rewards.condition_guide_stop == 'first_iteration')):
             
-                self.reward_names.remove("guide")
-                self.reward_functions.remove(self._reward_guide)
-                self.episode_sums["guide"] = torch.zeros(self.num_envs, device=self.device)
-                del self.reward_scales["guide"]
+            if "tracking_position" in self.episode_sums.keys():
+
+                if  (( self.cfg.rewards.condition_guide_stop == 'task_progress' and
+                    torch.mean(self.episode_sums["tracking_position"][env_ids]) / self.max_episode_length > self.cfg.rewards.guide_stop_reach) 
+                    or
+                    (self.cfg.rewards.condition_guide_stop == 'first_iteration')):
+                
+                    self.reward_names.remove("guide")
+                    self.reward_functions.remove(self._reward_guide)
+                    self.episode_sums["guide"] = torch.zeros(self.num_envs, device=self.device)
+                    del self.reward_scales["guide"]
+
+            else:
+                if  (( self.cfg.rewards.condition_guide_stop == 'task_progress' and
+                    self.extras["episode"]["reach_rate"]  >= 0.8)
+                    or
+                    (self.cfg.rewards.condition_guide_stop == 'first_iteration')):
+                
+                    self.reward_names.remove("guide")
+                    self.reward_functions.remove(self._reward_guide)
+                    self.episode_sums["guide"] = torch.zeros(self.num_envs, device=self.device)
+                    del self.reward_scales["guide"]
+
 
         # reset robot states
         self._reset_dofs(env_ids)
